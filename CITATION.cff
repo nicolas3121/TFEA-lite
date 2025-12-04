@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use TFEA-lite in your research, please cite it using the following metadata."
+title: "TFEA-lite: A lightweight toolbox for finite element analysis"
+authors:
+  - family-names: Zhang
+    given-names: Songhan
+    email: "songhan.zhang@ugent.be"
+version: "0.1.0"
+date-released: "2025-12-05"
+license: "GPL-3.0-or-later"
+repository-code: "https://github.com/songhanzhang/TFEA-lite"
+keywords:
+  - finite element method
+  - computational mechanics
+  - numerical simulation
+  - structural analysis
