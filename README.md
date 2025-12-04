@@ -3,14 +3,10 @@
 
 # Toolbox for fininte element analysis (lite version)
 
-**TFEA-lite** is a lightweight public subset of the ```TFEA``` (Toolbox for Fininte Element Analysis) codebase (2022–now).  
-It provides a compact and scriptable environment for small-strain, linear elastic finite element analysis, suitable for research prototyping, teaching, and reproducible examples.
-```TFEA-lite``` contains only the essential element types and regular solvers.  
-The full ```TFEA``` framework remains private at this stage due to ongoing maintenance and active development.
-For background theories on the finite element formulations used in this tool, refer to  
+**TFEA-lite** is a lightweight public subset of the ```TFEA``` (Toolbox for Fininte Element Analysis) codebase (2022–now). It provides a compact and scriptable environment for small-strain, linear elastic finite element analysis, suitable for research prototyping, teaching, and reproducible examples. ```TFEA-lite``` contains only the essential element types and regular solvers. The full ```TFEA``` framework remains private at this stage due to ongoing maintenance and active development. For background theories on the finite element formulations used in this tool, refer to  
 **Songhan Zhang, _Finite Element Method - Lecture Notes_, 2021** [Download](https://drive.google.com/file/d/14nab0rflYc-9BXTZNoSYYE6DMlTvOKxm/view?usp=drive_link).
 
-If you are interested in exploring more advanced modules (or Julia version), please feel free to contact [Songhan Zhang](mailto:songhan.zhang@ugent.be).
+If you are interested in exploring more advanced modules (or Julia version), please feel free to contact the leading developer [Songhan Zhang](mailto:songhan.zhang@ugent.be).
 
 ## Preparation
 Before use, please check if the following have been well prepared:
@@ -108,3 +104,6 @@ reals = [
 ## Examples
 You can find a few typical cases in the folder ```examples```.
 These are recommended to refer as a template.
+
+## Acknowledgements
+The development of the full TFEA framework has benefited from auxiliary contributions by my former students, including **Yong Zhao**, **Jun Cao**, **Xingchao Sun**, **Hui Jiang**, and **Miao Zhang**. Their assistance with testing and debugging tasks is gratefully acknowledged.
