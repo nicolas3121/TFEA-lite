@@ -1,6 +1,7 @@
 import numpy as np
 from .core import model
 from .core import bc
+from .core import load
 from .core import assembly as asm
 from .core import solver as sol
 from .core import stress as sts
@@ -26,8 +27,14 @@ class FEModel:
     def cal_global_matrices(self, eval_mass = False, skip_elements = {}):
         asm.cal_KgMg(self, eval_mass = eval_mass, skip_elements = skip_elements)
     
+    def gen_dirichlet_bc(self, sel_condition, tol=1e-8):
+        bc.gen_dirichlet_bc(self, sel_condition, tol=tol)
+    
     def gen_P(self, fix_dofs):
         bc.dirichlet_Lagrange_II(self, fix_dofs)
+    
+    def gen_nodal_forces(self, sel_condition, force_expression, tol = 1e-8, reset = True):
+        load.gen_nodal_forces(self, sel_condition = sel_condition, force_expression = force_expression, tol = tol, reset = reset)
 
     def solve_static(self, Fg = []):
         sol.static(self, Fg = Fg)

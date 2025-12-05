@@ -9,8 +9,8 @@ def cal_KgMg(model, eval_mass = False, skip_elements = {}):
     if eval_mass == True:
         Mg = sp.sparse.lil_matrix((len(model.list_dof),len(model.list_dof)))
     for i_e, ele_info in enumerate(model.elements):
-        if (i_e + 1) % 100 == 0:
-            print(i_e+1)
+        # if (i_e + 1) % 100 == 0:
+        #     print(i_e+1)
         if (ele_info[0]) in skip_elements:
             continue
         mat_id = ele_info[2]

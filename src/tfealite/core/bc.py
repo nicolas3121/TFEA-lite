@@ -20,3 +20,20 @@ def dirichlet_Lagrange_II(model, fix_dofs):
                     shape=(n, int(keep.sum()))).tocsr()
     model.P = P
     print(f"=> P built fast: removed {n - keep.sum()} cols (fixed+slaves); shape = {P.shape}")
+
+def gen_dirichlet_bc(model, sel_condition, tol=1e-8):
+    fix_dofs = []
+    for node in model.nodes:
+        nid = int(node[0])
+        x, y, z = map(float, node[1:4])
+
+        if abs(sel_condition(x, y, z)) < tol:
+            for d in model.dof_per_node:
+                key = f"{nid}{d}"
+                dof_id = model.list_dof[key]
+                fix_dofs.append(dof_id)
+    if fix_dofs:
+        fix_dofs = np.array(sorted(set(fix_dofs)), dtype=int)
+    else:
+        fix_dofs = np.zeros(0, dtype=int)
+    model.gen_P(fix_dofs)

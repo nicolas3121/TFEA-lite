@@ -1,5 +1,8 @@
 from .FEModel import FEModel
+from .core.model import gen_ibeam_Tetr4n, gen_rect_Quad4n
 
 __all__ = [
-    "FEModel"
+    "FEModel",
+    "gen_ibeam_Tetr4n",
+    "gen_rect_Quad4n"
 ]
