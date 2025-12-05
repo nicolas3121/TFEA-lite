@@ -3,10 +3,9 @@
 
 # TFEA-lite - A lightweight public subset of the TFEA (Toolbox for Finite Element Analysis)
 
-**TFEA-lite** is a lightweight public subset of the ```TFEA``` (Toolbox for Fininte Element Analysis) codebase (2022–now). It provides a compact and scriptable environment for small-strain, linear elastic finite element analysis, suitable for research prototyping, teaching, and reproducible examples. ```TFEA-lite``` contains only the essential element types and regular solvers but provides a cleaner and more powerful high-level API that makes modelling, analysis and visualization significantly easier for users. The full ```TFEA``` framework remains private at this stage due to ongoing maintenance and active development. For background theories on the finite element formulations used in this tool, refer to  
-**Songhan Zhang, _Finite Element Method - Lecture Notes_, 2021** [Download](https://drive.google.com/file/d/14nab0rflYc-9BXTZNoSYYE6DMlTvOKxm/view?usp=drive_link).
+**TFEA-lite** is a lightweight public subset of the ```TFEA``` (Toolbox for Fininte Element Analysis) codebase (2022–now). It provides a compact and scriptable environment for small-strain, linear elastic finite element analysis, suitable for research prototyping, teaching, and reproducible examples. ```TFEA-lite``` contains only the essential element types and regular solvers but provides a cleaner and more powerful high-level API that makes modelling, analysis and visualization significantly easier for users.
 
-If you are interested in exploring more advanced modules (or Julia version), please feel free to contact [Songhan Zhang](mailto:songhan.zhang@ugent.be).
+The full ```TFEA``` framework remains private at this stage due to ongoing maintenance and active development. For background theories on the finite element formulations used in this tool, refer to **Songhan Zhang, _Finite Element Method - Lecture Notes_, 2021** [Download](https://drive.google.com/file/d/14nab0rflYc-9BXTZNoSYYE6DMlTvOKxm/view?usp=drive_link). If you are interested in exploring more advanced modules (or Julia version), please feel free to contact [Songhan Zhang](mailto:songhan.zhang@ugent.be).
 
 ## Preparation
 Before use, please check if the following have been well prepared:
@@ -41,6 +40,7 @@ Select the interpreter ```python x.xx.xx (myenv)``` and run.
 If the package can be imported without any error message, it is confirmed that the package is installed successfully.
 
 ## Start modeling (python version)
+
 ### Node definition
 The node coordinates are stored in a 4-column numpy array.
 Each row takes the form
@@ -58,6 +58,7 @@ nodes = np.array([
     [ 5, 2.0, 0.0, 0.0 ],
     [ 6, 2.5, 1.3, 0.0 ],
 ])
+
 ```
 ### Element definition
 The element information is stored in form of a python list. For each element, the properties includes:
@@ -73,6 +74,7 @@ elements = [
     [ 2, 'Quad4n', 2, 1, (3,5,6,4) ]
 ]
 ```
+
 ### Material properties
 A model may involve a number of different material properties to be assigned into the elements (recall 'material_id' in element information).
 The material properties are collected into a list, each sublist include the material id and a dictionary.
@@ -85,6 +87,7 @@ materials = [
 ]
 ```
 Note that, for each material, the definitions of the material properties can be disordered since they are collected in a dictionary. 
+
 ### Geometric properties
 For a part of the elements, the geometric properties are required:
  - 'Quad4n': thickness (t) (The value will be used only for plane stress problem when the external force is defined as lumped values)
@@ -94,7 +97,19 @@ reals = [
     [ 1, {'t': 0.01} ]
 ]
 ```
-### Generate list of DOFs
+
+### Compute stiffness (mass) matrices
+The model has a global degree of freedom (DOF) list by assigning a set of DOFs to every node. Such DOF list is a dictionary that maps a string key, for example, "12ux" for node id 12, translational displacement in $x$ to a unique global DOF index (0-based). Users can create the list from:
+```python
+model.gen_list_dof(model, dof_per_node = ['ux', 'uy'])
+```
+Note that the definition of ```dof_per_node``` is not a mandatory input. The value is ```['ux', 'uy', 'uz']``` by default. After creating the DOF list, the stiffness (mass) matrices can be evaluated from:
+```python
+model.cal_global_matrices()
+```
+The mass matrix is not computed by default. If you wish to perform dynamic analysis, please specify ```eval_mass = True```
+Both mass and stiffness matrices are stored in form of sparse matrices.
+
 ### Boundary conditions
 ### Load definition
 ### Solver
