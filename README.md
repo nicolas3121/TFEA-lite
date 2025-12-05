@@ -35,13 +35,13 @@ Create a new .py file in ```VS Code```, and write the script:
 ```python
 import tfealite as tf
 ```
-Select the interpreter ```python x.xx.xx (myenv)``` and run.
+Select the interpreter ```python x.xx.xx (myenv)``` and click ```run```.
 If the package can be imported without any error message, it is confirmed that the package is installed successfully.
 
 ## Quick start
 
 ### Node definition
-The node coordinates are stored in a 4-column numpy array. Each row takes the form ```[ node_id, $x$, $y$, $z$ ]```. If the model is planar, it is required to take ```z = 0``` for all the nodes. Note that the node_id is 1-based, not 0-based. For example:
+The node coordinates are stored in a 4-column numpy array. Each row takes the form ```[ node_id, x, y, z ]```. If the model is planar, it is required to take ```z = 0``` for all the nodes. Note that the node ID is 1-based, not 0-based. For example:
 
 ```python
 import numpy as np
@@ -59,11 +59,11 @@ nodes = np.array([
 ### Element definition
 The element information is stored in form of a python list. For each element, the properties includes: ```[ element_id, element_type, material_id, real_id, connectivity ]```. Note that the element_id is also 1-based. In the current lite version, the element types include:
 
- - ```Quad4n```: Bi-linear quadrilateral element (2D), each node includes the dofs: [ 'ux', 'uy' ]
- - ```Tetr4n```: Tetrahedral brick element (3D), each node includes the dofs: [ 'ux', 'uy', 'uz' ]
+ - ```Quad4n```: Bi-linear quadrilateral element (2D), each node includes the dofs: '''[ 'ux', 'uy' ]'''
+ - ```Tetr4n```: Tetrahedral brick element (3D), each node includes the dofs: '''[ 'ux', 'uy', 'uz' ]'''
 
-The material_id and real_id will be mentioned in the following sections. The connectivity is a tuple containing the node ids of the element vertices.
-For example, a planar 'Quad4n' model can be defined as:
+The material_id and real_id will be mentioned in the following sections. The connectivity is a tuple containing the node IDs of the element vertices.
+For example, a planar '''Quad4n''' model can be defined as:
 
 ```python
 elements = [
@@ -100,7 +100,7 @@ reals = [
 ```
 
 ### Compute stiffness (mass) matrices
-The model has a global degree of freedom (DOF) list by assigning a set of DOFs to every node. Such DOF list is a dictionary that maps a string key (for example, "12ux" for node id 12, translational displacement in $x$) to a unique global DOF index (0-based). Users can create the list from:
+The model has a global degree of freedom (DOF) list by assigning a set of DOFs to every node. Such DOF list is a dictionary that maps a string key (for example, ```'12ux'``` for node ID 12, translational displacement in $x$) to a unique global DOF index (0-based). Users can create the list from:
 
 ```python
 model.gen_list_dof(model, dof_per_node = ['ux', 'uy'])
@@ -116,7 +116,7 @@ The mass matrix is not computed by default. If you wish to perform dynamic analy
 Both mass and stiffness matrices are stored in form of sparse matrices.
 
 ### Boundary conditions
-The boundary conditions (B.C.s) are formulated based on the Lagrange's equation of the second kind (least number of DOFs). In the lite version, Dirichlet B.C.s can be easily applied by selecting nodes through a user-defined condition. A selection function ```sel_condition(x, y, z)``` returns a value indicating whether the node should be fixed or not. For the selected nodes, all the DOFs are constrained to zero. For example, to constrain the face at x = 0:
+The boundary conditions (B.C.s) are formulated based on the Lagrange's equation of the second kind (least number of DOFs). In the lite version, Dirichlet B.C.s can be easily applied by selecting nodes through a user-defined condition. A selection function ```sel_condition(x, y, z)``` returns a value indicating whether the node should be fixed or not. For the selected nodes, all the DOFs are constrained to zero. For example, to constrain the face at ```x = 0```:
 
 ```python
 def sel_condition(x,y,z):
@@ -169,28 +169,28 @@ model.solve_modal(num_eigs = 10)
 Users can specify the number of modes to be evaluated depending on their needs and computational resources. The value is ```num_eigs = 15``` by defult.
 
 ### Postprocessing
-After solving the displacement vector, element/nodal stresses can be computed in the postprocessing module. For Tetr4n elements, the element stresses can be evaluated by:
+After solving the displacement vector, element/nodal stresses can be computed in the postprocessing module. For ```Tetr4n``` elements, the element stresses can be evaluated by:
 
 ```python
 e_stress = model.cal_Tetr4n_stresses()
 ```
 
-This returns an array of size (n_elements, 6), containing the standard Voigt components ```$(\sigma_{xx}, \sigma_{yy}, \sigma_{zz}, \tau_{xy}, \tau_{xz}, \tau_{yz})$``` for each element. A volume-weighted nodal average of a specified stress component can be computed using:
+This returns an array of size (n_elements, 6), containing the standard Voigt components $(\sigma_{xx}, \sigma_{yy}, \sigma_{zz}, \tau_{xy}, \tau_{xz}, \tau_{yz})$ for each element. A volume-weighted nodal average of a specified stress component can be computed using:
 
 ```python
 n_stress = model_eval_node_average(e_stress[:,0])
 ```
 
-This returns an array having the length ```n_nodes```. For the 2D Quad4n elements, nodal stresses can be evaluated directly:
+This returns an array having the length ```n_nodes```. For the 2D ```Quad4n``` elements, nodal stresses can be evaluated directly by:
 
 ```python
 n_stress = model.compute_quad4n_nodal_stresses()
 ```
 
-This returns a ```(n_nodes, 3)``` array containing the stress components ```$(\sigma_{xx}, \sigma_{yy}, \sigma_{zz})$```.
+This returns a ```(n_nodes, 3)``` array containing the stress components $(\sigma_{xx}, \sigma_{yy}, \sigma_{zz})$.
 
 ### Visualization
-The method ```show()``` provides 2D/3D visualization of the mesh, boundary conditions, loads, deformations, nodal stresses. A minimum call is:
+The method ```show()``` provides a convenient entrance for 2D/3D visualization of the mesh, boundary conditions, loads, deformations, nodal stresses. A minimum call is:
 
 ```python
 model.show()
