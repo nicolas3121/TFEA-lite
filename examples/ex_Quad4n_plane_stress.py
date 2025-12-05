@@ -25,7 +25,7 @@ model.gen_nodal_forces(sel_condition, force_expression)
 
 # %% Solve
 model.solve_static()
-stress = model.compute_quad4n_nodal_stresses(Ug = model.Ug)
+stress = model.compute_quad4n_nodal_stresses()
 
 # %% Visualization
 model.show(

@@ -39,6 +39,9 @@ class FEModel:
     def solve_static(self, Fg = []):
         sol.static(self, Fg = Fg)
         
+    def solve_modal(self, tol = 1e-3, return_eigs = False, num_eigs = 15, sigma = 1e-6):
+        sol.modal(self, tol = tol, return_eigs = return_eigs, num_eigs = num_eigs, sigma = sigma)
+        
     def cal_Tetr4n_stresses(self):
         return sts.cal_Tetr4n_stresses(self)
     
