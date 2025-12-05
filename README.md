@@ -5,7 +5,7 @@
 
 **TFEA-lite** is a lightweight public subset of the ```TFEA``` (Toolbox for Fininte Element Analysis) codebase (2022–now). It provides a compact and scriptable environment for small-strain, linear elastic finite element analysis, suitable for research prototyping, teaching, and reproducible examples. ```TFEA-lite``` contains only the essential element types and regular solvers but provides a cleaner and more powerful high-level API that makes modelling, analysis and visualization significantly easier for users.
 
-The full ```TFEA``` framework remains private at this stage due to ongoing maintenance and active development. For background theories on the finite element formulations used in this tool, refer to **Songhan Zhang, _Finite Element Method - Lecture Notes_, 2021** [Download](https://drive.google.com/file/d/14nab0rflYc-9BXTZNoSYYE6DMlTvOKxm/view?usp=drive_link). If you are interested in exploring more advanced modules (or Julia version), please feel free to contact [Songhan Zhang](mailto:songhan.zhang@ugent.be).
+The full ```TFEA``` framework remains private at this stage due to ongoing maintenance and active development. For background theories on the finite element formulations used in this tool, refer to **Songhan Zhang, _Finite Element Method - Lecture Notes_, 2021** [Download](https://drive.google.com/file/d/14nab0rflYc-9BXTZNoSYYE6DMlTvOKxm/view?usp=drive_link). If you are interested in exploring more ```advanced modules``` (or ```Julia``` version), please feel free to contact [Songhan Zhang](mailto:songhan.zhang@ugent.be).
 
 ## Preparation
 Before use, please check if the following have been well prepared:
