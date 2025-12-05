@@ -15,8 +15,7 @@ Before use, please check if the following have been well prepared:
 
 ## Installation
 The installation via [conda](https://www.anaconda.com/download) is the most recommended.
-For Windows, Mac OS and Linux users, the miniconda can always be downloaded from the [link].
-After installation, you can start ```miniconda``` and install ```TFEA-lite``` following the steps:
+Once starting ```miniconda```, you can install ```TFEA-lite``` following the steps:
 ### Step 1: Create a new environment
 ```cmd
 conda create -n myenv python=3.12
