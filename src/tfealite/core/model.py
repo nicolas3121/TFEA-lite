@@ -1,18 +1,17 @@
 import numpy as np
 from collections import Counter
 
+
 def model_print(model):
-    print(f'=> Model created successfuly, including:')
-    print(f'   - {model.n_nodes} nodes')
+    print(f"=> Model created successfuly, including:")
+    print(f"   - {model.n_nodes} nodes")
     n_elements = len(model.elements)
     counts = Counter([etype for _, etype, *_ in model.elements])
     details = ", ".join(f"{counts[t]} {t}" for t in sorted(counts))
     print(f"   - {n_elements} elements, including: {details}")
 
-def gen_list_dof(
-        model,
-        dof_per_node = ['ux', 'uy', 'uz']
-):
+
+def gen_list_dof(model, dof_per_node=["ux", "uy", "uz"]):
     model.dof_per_node = dof_per_node
     model.list_dof = {}
     counter = 0
@@ -22,11 +21,8 @@ def gen_list_dof(
             counter += 1
     model.n_dof = len(model.list_dof)
 
-def gen_rect_Quad4n(
-        L, H,
-        nx = 20,
-        ny = 20
-):
+
+def gen_rect_Quad4n(L, H, nx=20, ny=20):
     dx = L / nx
     dy = H / ny
     nodes = []
@@ -37,7 +33,7 @@ def gen_rect_Quad4n(
             x = i * dx
             nodes.append([nid, x, y, 0.0])
             nid += 1
-    nodes = np.array(nodes, dtype = float)
+    nodes = np.array(nodes, dtype=float)
     elements = []
     eid = 1
     for j in range(ny):
@@ -48,22 +44,47 @@ def gen_rect_Quad4n(
             n2 = n1 + 1
             n3 = n2 + (nx + 1)
             n4 = n1 + (nx + 1)
-            elements.append([eid, 'Quad4n', 1, 1, (n1, n2, n3, n4)])
+            elements.append([eid, "Quad4n", 1, 1, (n1, n2, n3, n4)])
             eid += 1
     return nodes, elements
 
-def gen_ibeam_Tetr4n(
-    L, h, bf, tw, tf,
-    nx = 50,
-    ny_f = 4,
-    ny_w = 1,
-    nz_f = 1,
-    nz_w = 10
-):
+
+def gen_rect_Tri3n(L, H, nx=20, ny=20):
+    dx = L / nx
+    dy = H / ny
+    nodes = []
+    nid = 1
+    for j in range(ny + 1):
+        y = j * dy
+        for i in range(nx + 1):
+            x = i * dx
+            nodes.append([nid, x, y, 0.0])
+            nid += 1
+    nodes = np.array(nodes, dtype=float)
+    elements = []
+    eid = 1
+    for j in range(ny):
+        for i in range(nx):
+            if i < 3 and j == 8:
+                continue
+            n1 = j * (nx + 1) + i + 1
+            n2 = n1 + 1
+            n3 = n2 + (nx + 1)
+            n4 = n1 + (nx + 1)
+
+            elements.append([eid, "Tri3n", 1, 1, (n1, n2, n3)])
+            eid += 1
+
+            elements.append([eid, "Tri3n", 1, 1, (n1, n3, n4)])
+            eid += 1
+    return nodes, elements
+
+
+def gen_ibeam_Tetr4n(L, h, bf, tw, tf, nx=50, ny_f=4, ny_w=1, nz_f=1, nz_w=10):
     x = np.linspace(0.0, L, nx + 1)
     y1 = np.linspace(-bf / 2, -tw / 2, ny_f + 1)
-    y2 = np.linspace(-tw / 2,  tw / 2, ny_w + 1)
-    y3 = np.linspace( tw / 2,  bf / 2, ny_f + 1)
+    y2 = np.linspace(-tw / 2, tw / 2, ny_w + 1)
+    y3 = np.linspace(tw / 2, bf / 2, ny_f + 1)
     y = np.concatenate((y1, y2[1:], y3[1:]))
     z1 = np.linspace(0.0, tf, nz_f + 1)
     z2 = np.linspace(tf, h - tf, nz_w + 1)
@@ -91,8 +112,8 @@ def gen_ibeam_Tetr4n(
         z0, z1_ = z[kz], z[kz + 1]
         for ky in range(nyn - 1):
             y0, y1_ = y[ky], y[ky + 1]
-            in_bottom_flange = (z1_ <= tf + eps)
-            in_top_flange = (z0 >= h - tf - eps)
+            in_bottom_flange = z1_ <= tf + eps
+            in_top_flange = z0 >= h - tf - eps
             in_web_z = (z0 >= tf - eps) and (z1_ <= h - tf + eps)
             in_web_y = (y0 >= -tw / 2 - eps) and (y1_ <= tw / 2 + eps)
             inside = False
@@ -103,14 +124,14 @@ def gen_ibeam_Tetr4n(
             if not inside:
                 continue
             for kx in range(nxn - 1):
-                n000 = nid_at(kx,     ky,     kz)
-                n100 = nid_at(kx + 1, ky,     kz)
+                n000 = nid_at(kx, ky, kz)
+                n100 = nid_at(kx + 1, ky, kz)
                 n110 = nid_at(kx + 1, ky + 1, kz)
-                n010 = nid_at(kx,     ky + 1, kz)
-                n001 = nid_at(kx,     ky,     kz + 1)
-                n101 = nid_at(kx + 1, ky,     kz + 1)
+                n010 = nid_at(kx, ky + 1, kz)
+                n001 = nid_at(kx, ky, kz + 1)
+                n101 = nid_at(kx + 1, ky, kz + 1)
                 n111 = nid_at(kx + 1, ky + 1, kz + 1)
-                n011 = nid_at(kx,     ky + 1, kz + 1)
+                n011 = nid_at(kx, ky + 1, kz + 1)
                 tets = [
                     (n000, n100, n110, n111),
                     (n000, n110, n010, n111),
@@ -119,9 +140,9 @@ def gen_ibeam_Tetr4n(
                     (n000, n001, n101, n111),
                     (n000, n101, n100, n111),
                 ]
-                for (n1, n2, n3, n4) in tets:
-                    elems.append([eid, 'Tetr4n', 1, 1, (n1, n2, n3, n4)])
-                    eid += 1    
+                for n1, n2, n3, n4 in tets:
+                    elems.append([eid, "Tetr4n", 1, 1, (n1, n2, n3, n4)])
+                    eid += 1
 
     nodes = np.array(nodes)
     used_nids = set()
@@ -155,3 +176,4 @@ def gen_ibeam_Tetr4n(
     elems = new_elems
 
     return nodes, elems
+
