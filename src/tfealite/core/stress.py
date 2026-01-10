@@ -119,4 +119,3 @@ def eval_node_average(model, sxx):
             vol_sum[i] += v
     sxx_nodes = stress_sum / np.maximum(vol_sum, 1e-16)
     return sxx_nodes
-

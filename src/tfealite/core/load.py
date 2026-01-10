@@ -1,10 +1,7 @@
 import numpy as np
 
-def gen_nodal_forces(
-        model, sel_condition, force_expression,
-        tol = 1e-8,
-        reset = True
-):
+
+def gen_nodal_forces(model, sel_condition, force_expression, tol=1e-8, reset=True):
     if reset or getattr(model, "Fg", None) is None:
         Fg = np.zeros(model.n_dof, dtype=float)
     else:

@@ -3,7 +3,7 @@ from collections import Counter
 
 
 def model_print(model):
-    print(f"=> Model created successfuly, including:")
+    print("=> Model created successfuly, including:")
     print(f"   - {model.n_nodes} nodes")
     n_elements = len(model.elements)
     counts = Counter([etype for _, etype, *_ in model.elements])
@@ -176,4 +176,3 @@ def gen_ibeam_Tetr4n(L, h, bf, tw, tf, nx=50, ny_f=4, ny_w=1, nz_f=1, nz_w=10):
     elems = new_elems
 
     return nodes, elems
-

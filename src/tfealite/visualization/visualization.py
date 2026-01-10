@@ -207,4 +207,3 @@ def show(
             pl.screenshot(f"{file_name}.png", scale=2.0)
         else:
             pl.show()
-

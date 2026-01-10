@@ -138,4 +138,3 @@ def build_load_arrows(
     if mesh_load.n_points == 0:
         return None
     return mesh_load
-

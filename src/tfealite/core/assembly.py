@@ -77,11 +77,11 @@ def cal_KgMg(model, eval_mass=False, skip_elements={}):
     print(".. Stiffness & mass matrix completed!")
 
     Kg = 0.5 * (Kg + Kg.transpose())
-    if eval_mass == True:
+    if eval_mass:
         Mg = 0.5 * (Mg + Mg.transpose())
 
     model.Kg = Kg
-    if eval_mass == True:
+    if eval_mass:
         model.Mg = Mg
 
     print("=> Check sparsity of Kg: ")
@@ -92,6 +92,7 @@ def cal_KgMg(model, eval_mass=False, skip_elements={}):
     print(f"   - Matrix shape: {n_rows} x {n_cols}")
     print(f"   - Non-zero entries: {nonzero_entries}")
     print(f"   - Total entries: {total_entries}")
+    print(f"   - Matrix density: {density}")
     print(".. Finished")
 
     if eval_mass:
@@ -103,5 +104,5 @@ def cal_KgMg(model, eval_mass=False, skip_elements={}):
         print(f"   - Matrix shape: {n_rows} x {n_cols}")
         print(f"   - Non-zero entries: {nonzero_entries}")
         print(f"   - Total entries: {total_entries}")
+        print(f"   - Matrix density: {density}")
         print(".. Finished")
-

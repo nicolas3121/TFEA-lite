@@ -1,7 +1,7 @@
 import numpy as np
 
-class Tetr4n:
 
+class Tetr4n:
     def __init__(self, node_coords, material):
         self.node_coords = np.asarray(node_coords, dtype=float).reshape(4, 3)
         self.material = material
@@ -16,12 +16,14 @@ class Tetr4n:
         return N
 
     def shape_function_derivatives(self, natural_coordinate):
-        dN_dnat = np.array([
-            [-1.0, -1.0, -1.0],
-            [ 1.0,  0.0,  0.0],
-            [ 0.0,  1.0,  0.0],
-            [ 0.0,  0.0,  1.0],
-        ])
+        dN_dnat = np.array(
+            [
+                [-1.0, -1.0, -1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
         return dN_dnat
 
     def jacobian_matrix(self):
@@ -39,8 +41,8 @@ class Tetr4n:
     def strain_displacement_matrix(self):
         dN_dnat = self.shape_function_derivatives(None)
         J = self.jacobian_matrix()
-        invJ = np.linalg.inv(J) 
-        grads = (dN_dnat @ invJ)
+        invJ = np.linalg.inv(J)
+        grads = dN_dnat @ invJ
         B = np.zeros((6, 12), dtype=float)
         for i in range(4):
             dNdx, dNdy, dNdz = grads[i, :]
@@ -58,29 +60,32 @@ class Tetr4n:
 
     def cal_D(self, E=None, nu=None):
         if E is None:
-            E  = self.material['E']
+            E = self.material["E"]
         if nu is None:
-            nu = self.material['nu']
+            nu = self.material["nu"]
         lam = E * nu / ((1 + nu) * (1 - 2 * nu))
-        mu  = E / (2 * (1 + nu))
-        D = np.array([
-            [lam + 2 * mu, lam,           lam,           0,   0,   0],
-            [lam,          lam + 2 * mu,  lam,           0,   0,   0],
-            [lam,          lam,           lam + 2 * mu,  0,   0,   0],
-            [0,            0,             0,             mu,  0,   0],
-            [0,            0,             0,             0,   mu,  0],
-            [0,            0,             0,             0,   0,   mu],
-        ], dtype=float)
+        mu = E / (2 * (1 + nu))
+        D = np.array(
+            [
+                [lam + 2 * mu, lam, lam, 0, 0, 0],
+                [lam, lam + 2 * mu, lam, 0, 0, 0],
+                [lam, lam, lam + 2 * mu, 0, 0, 0],
+                [0, 0, 0, mu, 0, 0],
+                [0, 0, 0, 0, mu, 0],
+                [0, 0, 0, 0, 0, mu],
+            ],
+            dtype=float,
+        )
         return D
 
     def cal_element_matrices(self, eval_mass=False):
         V = self.element_volume()
         B = self.strain_displacement_matrix()
-        D = self.cal_D(self.material['E'], self.material['nu'])
+        D = self.cal_D(self.material["E"], self.material["nu"])
         Ke = B.T @ D @ B * V
         if not eval_mass:
             return Ke
-        rho = self.material['rho']
+        rho = self.material["rho"]
         M_scalar = (rho * V / 20.0) * (2.0 * np.eye(4) + (np.ones((4, 4)) - np.eye(4)))
         Me = np.kron(M_scalar, np.eye(3))
         return Me, Ke
@@ -88,13 +93,15 @@ class Tetr4n:
     def cal_element_stress(self, Ue):
         Ue = np.asarray(Ue, dtype=float)
         if Ue.ndim == 2:
-            Ue = Ue.reshape(12,)
+            Ue = Ue.reshape(
+                12,
+            )
         elif Ue.ndim == 1 and Ue.size == 12:
             pass
         else:
             raise ValueError(f"Ue must be (4,3) or (12,), got shape {Ue.shape}")
         B = self.strain_displacement_matrix()
-        D = self.cal_D(self.material['E'], self.material['nu'])
+        D = self.cal_D(self.material["E"], self.material["nu"])
         strain = B @ Ue
         stress = D @ strain
         return stress
