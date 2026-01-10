@@ -19,6 +19,18 @@ dependencies = [
     "pyvista",
 ]
 
+[project.optional-dependencies]
+test = [
+	"pytest>=9.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["tfealite*"]
+
+[tool.pytest]
+minversion = "9.0"
+addopts = ["-ra", "-q"]
+testpaths = [
+    "tests",
+]
