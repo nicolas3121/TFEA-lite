@@ -9,12 +9,13 @@ def test_rigid_body_modes():
 
     tri = Tri3n(nodes, material, real)
     Ke = tri.cal_element_matrices(eval_mass=False)
-    eigenvalues = np.linalg.eigvals(Ke)
+    eigenvalues = np.abs(np.linalg.eigvals(Ke))
 
     # Sort eigenvalues to find the smallest ones
     eigenvalues.sort()
 
-    assert np.all(eigenvalues[:3] < 1e-10), "Failed Rigid Body Motion Test!"
+    assert np.allclose(eigenvalues[:3], 0)
+    assert not np.any(np.isclose(eigenvalues[3:], 0))
 
 
 def test_mass_matrix():
