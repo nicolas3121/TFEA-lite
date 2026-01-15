@@ -1,4 +1,9 @@
 import numpy as np
+from typing import Final
+
+NODES: Final = 3
+DOFS: Final = 2
+N_DOFS: Final = DOFS * NODES
 
 
 class Tri3n:
@@ -22,31 +27,26 @@ class Tri3n:
         xi, eta = 1 / 3, 1 / 3
         weight = 1 / 2
 
-        Ke = np.zeros((6, 6))
-        Me = np.zeros((6, 6)) if eval_mass else None
+        Ke = np.zeros((N_DOFS, N_DOFS))
+        Me = np.zeros((N_DOFS, N_DOFS)) if eval_mass else None
         x_e = self.node_coords
 
         N, dN_dxi = self.shape_functions(xi, eta)
         J = dN_dxi @ x_e
         detJ = np.linalg.det(J)
-        invJ = np.linalg.inv(J)
 
         B = np.zeros((3, 6))
-        dN_dxy = invJ @ dN_dxi
-        for i in range(3):
-            ix = 2 * i
-            iy = 2 * i + 1
-            B[0, ix] = dN_dxy[0, i]
-            B[1, iy] = dN_dxy[1, i]
-            B[2, ix] = dN_dxy[1, i]
-            B[2, iy] = dN_dxy[0, i]
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+        B[0, ::DOFS] = dN_dxy[0, :]
+        B[1, 1::DOFS] = dN_dxy[1, :]
+        B[2, ::DOFS] = dN_dxy[1, :]
+        B[2, 1::DOFS] = dN_dxy[0, :]
         Ke += (B.T @ self.C @ B) * detJ * weight * self.t
         if eval_mass:
             rho_t = self.rho * self.t
-            N_2d = np.zeros((2, 6))
-            for i in range(3):
-                N_2d[0, 2 * i] = N[i]
-                N_2d[1, 2 * i + 1] = N[i]
+            N_2d = np.zeros((DOFS, N_DOFS))
+            N_2d[0, ::DOFS] = N
+            N_2d[1, 1::DOFS] = N
             Me += rho_t * (N_2d.T @ N_2d) * detJ * weight
             return Me, Ke
         else:
@@ -66,17 +66,13 @@ class Tri3n:
 
         _, dN_dxi = self.shape_functions(xi, eta)
         J = dN_dxi @ x_e
-        invJ = np.linalg.inv(J)
 
         B = np.zeros((3, 6))
-        dN_dxy = invJ @ dN_dxi
-        for i in range(3):
-            ix = 2 * i
-            iy = 2 * i + 1
-            B[0, ix] = dN_dxy[0, i]
-            B[1, iy] = dN_dxy[1, i]
-            B[2, ix] = dN_dxy[1, i]
-            B[2, iy] = dN_dxy[0, i]
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+        B[0, ::DOFS] = dN_dxy[0, :]
+        B[1, 1::DOFS] = dN_dxy[1, :]
+        B[2, ::DOFS] = dN_dxy[1, :]
+        B[2, 1::DOFS] = dN_dxy[0, :]
 
         eps = B @ Ue
         sig = self.C @ eps
