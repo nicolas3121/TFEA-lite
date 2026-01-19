@@ -79,17 +79,67 @@ class XTri3n(Tri3n):
                 Nc[j, i] = np.clip(1 / (1 - phi_j / phi_i), 0, 1)
                 Nc[i, i] = np.clip(1 - Nc[j, i], 0, 1)
         if self.partial_cut:
+            x, w = np.polynomial.legendre.leggauss(40)
+            print(x.shape)
+            x = (1 + x) / 2
+            w /= 2
             Ni_template = np.zeros((3, 3))
-            Ni_template[:, 2] = np.linalg.solve(
+            Ni_template[:, 0] = np.linalg.solve(
                 np.array([self.phi_t, self.phi_n, [1, 1, 1]]), np.array([0, 0, 1])
             )
-            for i in range(6):
+            for i in range(6):  # singularity verplaatst naar 1ste vertex
                 Ni = Ni_template.copy()
-                Ni[int((i % 5 + 1) / 2), i % 2] = 1
-                Ni[:, 1 - i % 2] = Nc[:, int(i / 2)]
+                Ni[int((i % 5 + 1) / 2), 1 + i % 2] = 1
+                Ni[:, 2 - i % 2] = Nc[:, int(i / 2)]
                 detJi = np.linalg.det(Ni)
                 if np.isclose(detJi, 0):
                     continue
+                for u0, w1 in zip(x, w):
+                    for v0, w2 in zip(x, w):
+                        beta = 1
+                        w_eff = w1 * w2 * beta * u0 ** (2 * beta - 1)
+                        u = u0**beta
+                        n = np.array([2 * u, u * (1 - v0), u * v0])
+                        xi_sub, eta_sub = np.linalg.solve(
+                            J.T, x_e.T @ Ni @ n - x_e[0, :]
+                        )
+                        N_sub, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+                        dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+                        TIP_B = np.zeros((3, TIP_DOFS))
+                        begin_tip = N_FN + int(self.h_enrich) * H_FN
+                        TIP_B[0, ::DOFS] = dN_dxy_sub[0, begin_tip:]
+                        TIP_B[1, 1::DOFS] = dN_dxy_sub[1, begin_tip:]
+                        TIP_B[2, ::DOFS] = dN_dxy_sub[1, begin_tip:]
+                        TIP_B[2, 1::DOFS] = dN_dxy_sub[0, begin_tip:]
+                        # print(TIP_B.shape, self.C.shape)
+                        begin_tip *= DOFS
+                        Ke[begin_tip:, begin_tip:] += (
+                            (TIP_B.T @ self.C @ TIP_B) * w_eff * detJi
+                        )
+                        beta = 2
+                        w_eff = w1 * w2 * beta * u0 ** (2 * beta - 1)
+                        u = u0**beta
+                        n = np.array([2 * u, u * (1 - v0), u * v0])
+                        xi_sub, eta_sub = np.linalg.solve(
+                            J.T, x_e.T @ Ni @ n - x_e[0, :]
+                        )
+                        N_sub, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+                        dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+                        TIP_B = np.zeros((3, TIP_DOFS))
+                        begin_tip = N_FN + int(self.h_enrich) * H_FN
+                        TIP_B[0, ::DOFS] = dN_dxy_sub[0, begin_tip:]
+                        TIP_B[1, 1::DOFS] = dN_dxy_sub[1, begin_tip:]
+                        TIP_B[2, ::DOFS] = dN_dxy_sub[1, begin_tip:]
+                        TIP_B[2, 1::DOFS] = dN_dxy_sub[0, begin_tip:]
+                        # print(TIP_B.shape, self.C.shape)
+                        begin_tip *= DOFS
+                        Ke[0:begin_tip, begin_tip:] += (
+                            (B.T @ self.C @ TIP_B) * w_eff * detJi
+                        )
+                        Ke[begin_tip:, 0:begin_tip] += Ke[0:begin_tip, begin_tip:].T
+
+                # zorgen dat alle punten voor sub triangle 1 keer berekent worden en dan voor alle nodige integraties gebruikt worden
+                # momenteel is crack tip 3de node moet eerste worden --> cyclisch doorschuiven
         else:
             for i in range(4):
                 if i != 3:
@@ -179,16 +229,16 @@ class XTri3n(Tri3n):
                 ).reshape((1, TIP_FN))
             else:
                 begin_tip, end_tip = N_FN, N_FN + TIP_FN
-                N[begin_tip, end_tip] = (
+                N[begin_tip:end_tip] = (
                     (bf - bf_i.T) * N[:N_FN].reshape((-1, 1))
                 ).reshape((1, TIP_FN))
             term1 = dbf_dxi * N[:N_FN, None, None]  # (3, 2, 4)
             term2 = (
-                N[begin_tip:].reshape((-1, BRANCH_FN))[:, :, None]
+                N[begin_tip:end_tip].reshape((-1, BRANCH_FN))[:, :, None]
                 * dN_dxi[:, :N_FN].T[:, None, :]
             )  # (3, 4, 2)
-            dN_dxi[0, begin_tip:] = (term1[:, 0, :] + term2[:, :, 0]).flatten()
-            dN_dxi[1, begin_tip:] = (term1[:, 1, :] + term2[:, :, 1]).flatten()
+            dN_dxi[0, begin_tip:end_tip] = (term1[:, 0, :] + term2[:, :, 0]).flatten()
+            dN_dxi[1, begin_tip:end_tip] = (term1[:, 1, :] + term2[:, :, 1]).flatten()
             # for i in range(0, TIP_FN, BRANCH_FN):
             #     node = int(i / BRANCH_FN)
             #     term1 = dbf_dxi * N[node]
