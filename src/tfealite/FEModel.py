@@ -16,6 +16,12 @@ class FEModel:
         self.reals = reals
         self.n_nodes = len(self.nodes)
         self.n_elements = len(self.elements)
+        self.Ug = None
+        self.dof_per_node = None
+        self.list_dof = None
+        self.n_dof = None
+        self.Kg = None
+        self.Mg = None
         model.model_print(self)
 
     def gen_list_dof(self, dof_per_node=["ux", "uy", "uz"]):
