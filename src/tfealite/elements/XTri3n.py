@@ -79,7 +79,7 @@ class XTri3n(Tri3n):
                 Nc[j, i] = np.clip(1 / (1 - phi_j / phi_i), 0, 1)
                 Nc[i, i] = np.clip(1 - Nc[j, i], 0, 1)
         if self.partial_cut:
-            x, w = np.polynomial.legendre.leggauss(40)
+            x, w = np.polynomial.legendre.leggauss(8)
             print(x.shape)
             x = (1 + x) / 2
             w /= 2
@@ -136,32 +136,42 @@ class XTri3n(Tri3n):
                         Ke[0:begin_tip, begin_tip:] += (
                             (B.T @ self.C @ TIP_B) * w_eff * detJi
                         )
-                        Ke[begin_tip:, 0:begin_tip] += Ke[0:begin_tip, begin_tip:].T
+                        Ke[begin_tip:, 0:begin_tip] += (
+                            (TIP_B.T @ self.C @ B) * w_eff * detJi
+                        )
 
                 # zorgen dat alle punten voor sub triangle 1 keer berekent worden en dan voor alle nodige integraties gebruikt worden
                 # momenteel is crack tip 3de node moet eerste worden --> cyclisch doorschuiven
         else:
+            # print("Xe\n", x_e)
+            # print("Nc\n", Nc)
             for i in range(4):
                 if i != 3:
                     Ni = np.eye(3)
-                    Ni[:, (i + 1) % 3] = Ni[:, i]
-                    Ni[:, (i + 2) % 3] = Ni[:, (i + 2) % 3]
+                    Ni[:, (i + 1) % 3] = Nc[:, i]
+                    Ni[:, (i + 2) % 3] = Nc[:, (i + 2) % 3]
                 else:
                     Ni = Nc.copy()
+                # print("Ni\n", Ni)
                 detJi = np.linalg.det(Ni)
-                if np.isclose(detJi, 0):
-                    continue
+                # print("detJi", detJi)
+                # if np.isclose(detJi, 0):
+                #     continue
                 xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ N - x_e[0, :])
-                N_sub, _ = super().shape_functions(xi_sub, eta_sub)
-                h_shifted = (
-                    np.sign(np.dot(self.phi_n, N_sub)) - np.sign(self.phi_n)
-                ) / 2
-                HB = B.copy()
-                HB[:, ::DOFS] *= h_shifted
-                HB[:, 1::DOFS] *= h_shifted
+                _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+                dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+                # h_shifted = (
+                #     np.sign(np.dot(self.phi_n, N_sub)) - np.sign(self.phi_n)
+                # ) / 2
+                HB = np.zeros_like(B)
+                HB[0, ::DOFS] = dN_dxy_sub[0, 3:6]
+                HB[1, 1::DOFS] = dN_dxy_sub[1, 3:6]
+                HB[2, ::DOFS] = dN_dxy_sub[1, 3:6]
+                HB[2, 1::DOFS] = dN_dxy_sub[0, 3:6]
+                print(B.T @ self.C @ HB)
                 Ke[6:12, 6:12] += (HB.T @ self.C @ HB) * detJi
                 Ke[0:6, 6:12] += (B.T @ self.C @ HB) * detJi
-                Ke[6:12, 0:6] += Ke[0:6, 6:12].T
+                Ke[6:12, 0:6] += (HB.T @ self.C @ B) * detJi
             Ke *= detJ * weight * self.t
 
         if eval_mass:
@@ -179,6 +189,8 @@ class XTri3n(Tri3n):
             )
         )
         (N[:N_FN], dN_dxi[:, :N_FN]) = super().shape_functions(xi, eta)
+        print("phi_n", self.phi_n)
+        print("phi_t", self.phi_t)
         phi_n = np.dot(self.phi_n, N[:N_FN])
         phi_t = np.dot(self.phi_t, N[:N_FN])
         if self.h_enrich:
