@@ -1,9 +1,10 @@
 import numpy as np
+from .dofs import DofType
 
 
 def gen_nodal_forces(model, sel_condition, force_expression, tol=1e-8, reset=True):
     if reset or getattr(model, "Fg", None) is None:
-        Fg = np.zeros(model.n_dof, dtype=float)
+        Fg = np.zeros(model.list_dof.n_dof, dtype=float)
     else:
         Fg = np.array(model.Fg, copy=True, dtype=float)
 
@@ -13,15 +14,15 @@ def gen_nodal_forces(model, sel_condition, force_expression, tol=1e-8, reset=Tru
 
         if abs(sel_condition(x, y, z)) < tol:
             fx, fy, fz = force_expression(x, y, z)
-
             if fx != 0.0:
-                dof_id = model.list_dof[f"{nid}ux"]
+                dof_id = model.list_dof[(nid, DofType.UX)]
                 Fg[dof_id] += fx
             if fy != 0.0:
-                dof_id = model.list_dof[f"{nid}uy"]
+                dof_id = model.list_dof[(nid, DofType.UY)]
+                print(dof_id)
                 Fg[dof_id] += fy
             if fz != 0.0:
-                dof_id = model.list_dof[f"{nid}uz"]
+                dof_id = model.list_dof[(nid, DofType.UZ)]
                 Fg[dof_id] += fz
 
     model.Fg = Fg

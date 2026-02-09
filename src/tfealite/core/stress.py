@@ -2,6 +2,7 @@ import numpy as np
 from ..elements.Quad4n import Quad4n
 from ..elements.Tri3n import Tri3n
 from ..elements.Tetr4n import Tetr4n
+from .dofs import DofType
 
 
 def cal_Tetr4n_stresses(model):
@@ -10,18 +11,18 @@ def cal_Tetr4n_stresses(model):
     for element in model.elements:
         eid, _, mat_id, _real_id, conn = element
         Ue = np.zeros((4, 3), dtype=float)
-        Ue[0, 0] = Ug[model.list_dof[f"{conn[0]}ux"]]
-        Ue[0, 1] = Ug[model.list_dof[f"{conn[0]}uy"]]
-        Ue[0, 2] = Ug[model.list_dof[f"{conn[0]}uz"]]
-        Ue[1, 0] = Ug[model.list_dof[f"{conn[1]}ux"]]
-        Ue[1, 1] = Ug[model.list_dof[f"{conn[1]}uy"]]
-        Ue[1, 2] = Ug[model.list_dof[f"{conn[1]}uz"]]
-        Ue[2, 0] = Ug[model.list_dof[f"{conn[2]}ux"]]
-        Ue[2, 1] = Ug[model.list_dof[f"{conn[2]}uy"]]
-        Ue[2, 2] = Ug[model.list_dof[f"{conn[2]}uz"]]
-        Ue[3, 0] = Ug[model.list_dof[f"{conn[3]}ux"]]
-        Ue[3, 1] = Ug[model.list_dof[f"{conn[3]}uy"]]
-        Ue[3, 2] = Ug[model.list_dof[f"{conn[3]}uz"]]
+        Ue[0, 0] = Ug[model.list_dof[(conn[0], DofType.UX)]]
+        Ue[0, 1] = Ug[model.list_dof[(conn[0], DofType.UY)]]
+        Ue[0, 2] = Ug[model.list_dof[(conn[0], DofType.UZ)]]
+        Ue[1, 0] = Ug[model.list_dof[(conn[1], DofType.UX)]]
+        Ue[1, 1] = Ug[model.list_dof[(conn[1], DofType.UY)]]
+        Ue[1, 2] = Ug[model.list_dof[(conn[1], DofType.UZ)]]
+        Ue[2, 0] = Ug[model.list_dof[(conn[2], DofType.UX)]]
+        Ue[2, 1] = Ug[model.list_dof[(conn[2], DofType.UY)]]
+        Ue[2, 2] = Ug[model.list_dof[(conn[2], DofType.UZ)]]
+        Ue[3, 0] = Ug[model.list_dof[(conn[3], DofType.UX)]]
+        Ue[3, 1] = Ug[model.list_dof[(conn[3], DofType.UY)]]
+        Ue[3, 2] = Ug[model.list_dof[(conn[3], DofType.UZ)]]
         ele_vertices = np.zeros((4, 3))
         for jj in range(4):
             ele_vertices[jj, :] = model.nodes[int(conn[jj]) - 1, 1:4]
@@ -50,8 +51,8 @@ def compute_quad4n_nodal_stresses(model, Ug=None):
         elem = Quad4n(coords2d, material, real)
         dofs = []
         for nid in conn:
-            dofs.append(model.list_dof[f"{nid}ux"])
-            dofs.append(model.list_dof[f"{nid}uy"])
+            dofs.append(model.list_dof[(nid, DofType.UX)])
+            dofs.append(model.list_dof[(nid, DofType.UY)])
         dofs = np.asarray(dofs, dtype=int)
         Ue = Ug[dofs]
         sig_nodes = elem.stresses_at_nodes(Ue)
@@ -85,8 +86,8 @@ def compute_tri3n_nodal_stresses(model, Ug=None):
         elem = Tri3n(coords2d, material, real)
         dofs = []
         for nid in conn:
-            dofs.append(model.list_dof[f"{nid}ux"])
-            dofs.append(model.list_dof[f"{nid}uy"])
+            dofs.append(model.list_dof[(nid, DofType.UX)])
+            dofs.append(model.list_dof[(nid, DofType.UY)])
         dofs = np.asarray(dofs, dtype=int)
         Ue = Ug[dofs]
         sig_nodes = elem.stresses_at_nodes(Ue)

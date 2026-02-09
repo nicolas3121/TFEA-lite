@@ -2,6 +2,7 @@ import numpy as np
 import pyvista as pv
 
 from . import build_mesh as bm
+from ..core.dofs import DofType
 
 
 def build_gcs(model, length=1.0):
@@ -148,13 +149,12 @@ def show(
         node_coord_fixed = []
         for node in nodes_def:
             nid = int(node[0])
+            # had extra dofs for shell elements here first rx, ry, rz
+            # TODO: should add to DofType
             if (
-                model.list_dof.get(f"{nid}ux") in model.fix_dofs
-                or model.list_dof.get(f"{nid}uy") in model.fix_dofs
-                or model.list_dof.get(f"{nid}uz") in model.fix_dofs
-                or model.list_dof.get(f"{nid}rx") in model.fix_dofs
-                or model.list_dof.get(f"{nid}ry") in model.fix_dofs
-                or model.list_dof.get(f"{nid}rz") in model.fix_dofs
+                model.list_dof.get(nid, DofType.UX) in model.fix_dofs
+                or model.list_dof.get(nid, DofType.UY) in model.fix_dofs
+                or model.list_dof.get(nid, DofType.UZ) in model.fix_dofs
             ):
                 node_coord_fixed.append(node[1:4])
         mesh_node_bc = (
@@ -192,7 +192,10 @@ def show(
     mesh_load = None
     if load_size is not None and hasattr(model, "Fg"):
         mesh_load = bm.build_load_arrows(
-            nodes_def, model.Fg, model.list_dof, model.dof_per_node, load_size=load_size
+            nodes_def,
+            model.Fg,
+            model.list_dof,
+            load_size=load_size,
         )
         if do_plot and mesh_load is not None:
             pl.add_mesh(mesh_load, color="red")

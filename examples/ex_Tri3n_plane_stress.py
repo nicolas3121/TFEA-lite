@@ -9,7 +9,7 @@ model = tf.FEModel(nodes, elements, materials, reals)
 
 
 # %% Finite element formulation
-model.gen_list_dof(dof_per_node=["ux", "uy"])
+model.gen_list_dof(dof_per_node=tf.DofType.UX | tf.DofType.UY)
 model.cal_global_matrices()
 
 

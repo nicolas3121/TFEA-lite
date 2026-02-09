@@ -4,13 +4,14 @@ from ..elements.Quad4n import Quad4n
 from ..elements.Tri3n import Tri3n
 from ..elements.XTri3n import XTri3n
 from ..elements.Tetr4n import Tetr4n
+from .dofs import DofType
 
 
 def cal_KgMg(model, eval_mass=False, skip_elements={}):
     print("=> Start evaluating stiffness matrix:")
-    Kg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
+    Kg = sp.sparse.lil_matrix((model.list_dof.n_dof, model.list_dof.n_dof))
     if eval_mass:
-        Mg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
+        Mg = sp.sparse.lil_matrix((model.list_dof.n_dof, model.list_dof.n_dof))
     for i_e, ele_info in enumerate(model.elements):
         # if (i_e + 1) % 100 == 0:
         #     print(i_e+1)
@@ -36,9 +37,9 @@ def cal_KgMg(model, eval_mass=False, skip_elements={}):
             counter = 0
             for ii in range(n_nodes):
                 i_node = ele_info[4][ii]
-                DOFs[counter] = model.list_dof[f"{i_node}ux"]
+                DOFs[counter] = model.list_dof[(i_node, DofType.UX)]
                 counter += 1
-                DOFs[counter] = model.list_dof[f"{i_node}uy"]
+                DOFs[counter] = model.list_dof[(i_node, DofType.UY)]
                 counter += 1
             for ii in range(2 * n_nodes):
                 for jj in range(2 * n_nodes):
@@ -61,11 +62,11 @@ def cal_KgMg(model, eval_mass=False, skip_elements={}):
             counter = 0
             for ii in range(4):
                 i_node = ele_info[4][ii]
-                DOFs[counter] = model.list_dof[f"{i_node}ux"]
+                DOFs[counter] = model.list_dof[(i_node, DofType.UX)]
                 counter += 1
-                DOFs[counter] = model.list_dof[f"{i_node}uy"]
+                DOFs[counter] = model.list_dof[(i_node, DofType.UY)]
                 counter += 1
-                DOFs[counter] = model.list_dof[f"{i_node}uz"]
+                DOFs[counter] = model.list_dof[(i_node, DofType.UZ)]
                 counter += 1
             for ii in range(12):
                 for jj in range(12):
@@ -112,7 +113,7 @@ def cal_KgMg(model, eval_mass=False, skip_elements={}):
 def cal_KgMg_XFEM(model, eval_mass=False, skip_elements={}):
     print("=> Start evaluating stiffness matrix:")
     Kg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
-    print(model.n_dof)
+    print(model.list_dof.n_dof)
     print(Kg.shape)
     cut_elem = set(model.level_set[2])
     # partial_cut_elem = set(model.level_set[3])

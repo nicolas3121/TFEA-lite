@@ -1,5 +1,6 @@
 import numpy as np
 import pyvista as pv
+from ..core.dofs import DofType
 
 
 def _id_to_index(nodes):
@@ -96,28 +97,25 @@ def build_load_arrows(
     nodes,
     Fg,
     list_dof,
-    dof_per_node,
     load_size=(1.0, 1.0),
     min_mag=1e-3,
 ):
     arrow_amp, arrow_scale = load_size
     nodes = np.asarray(nodes, dtype=float)
     Fg = np.asarray(Fg, dtype=float)
-    has_uz = "uz" in dof_per_node
     mesh_load = pv.PolyData()
     for _, nd in enumerate(nodes):
         nid = int(nd[0])
         fx = fy = fz = 0.0
-        idx = list_dof.get(f"{nid}ux")
-        if idx is not None:
-            fx = Fg[idx] * arrow_amp * arrow_scale
-        idx = list_dof.get(f"{nid}uy")
-        if idx is not None:
-            fy = Fg[idx] * arrow_amp * arrow_scale
-        if has_uz:
-            idx = list_dof.get(f"{nid}uz")
-            if idx is not None:
-                fz = Fg[idx] * arrow_amp * arrow_scale
+        node_dof_number = list_dof.get(nid, DofType.UX)
+        if node_dof_number is not None:
+            fx = Fg[node_dof_number] * arrow_amp * arrow_scale
+        node_dof_number = list_dof.get(nid, DofType.UY)
+        if node_dof_number is not None:
+            fy = Fg[node_dof_number] * arrow_amp * arrow_scale
+        node_dof_number = list_dof.get(nid, DofType.UZ)
+        if node_dof_number is not None:
+            fz = Fg[node_dof_number] * arrow_amp * arrow_scale
         mag_f = np.sqrt(fx * fx + fy * fy + fz * fz)
         if mag_f <= min_mag:
             continue

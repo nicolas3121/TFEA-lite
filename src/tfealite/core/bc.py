@@ -5,7 +5,7 @@ import scipy as sp
 def dirichlet_Lagrange_II(model, fix_dofs):
     model.fix_dofs = fix_dofs
     print(f"=> P matrix started, including {len(fix_dofs)} dofs to eliminate")
-    n = len(model.list_dof)
+    n = model.list_dof.n_dof
     fix_dofs = np.asarray(fix_dofs, dtype=np.int64).ravel()
     if fix_dofs.size:
         fix_dofs = np.unique(fix_dofs[(fix_dofs >= 0) & (fix_dofs < n)])
@@ -33,10 +33,12 @@ def gen_dirichlet_bc(model, sel_condition, tol=1e-8):
         x, y, z = map(float, node[1:4])
 
         if abs(sel_condition(x, y, z)) < tol:
-            for d in model.dof_per_node:
-                key = f"{nid}{d}"
-                dof_id = model.list_dof[key]
-                fix_dofs.append(dof_id)
+            for offset in range(0, np.bitwise_count(model.dof_per_node)):
+                fix_dofs.append(model.list_dof[(nid, 1 << offset)])
+            # for d in model.dof_per_node:
+            #     key = f"{nid}{d}"
+            #     dof_id = model.list_dof[key]
+            #     fix_dofs.append(dof_id)
     if fix_dofs:
         fix_dofs = np.array(sorted(set(fix_dofs)), dtype=int)
     else:

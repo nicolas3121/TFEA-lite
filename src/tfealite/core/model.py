@@ -1,4 +1,5 @@
 import numpy as np
+from .dofs import DofList
 from collections import Counter
 
 
@@ -11,15 +12,9 @@ def model_print(model):
     print(f"   - {n_elements} elements, including: {details}")
 
 
-def gen_list_dof(model, dof_per_node=["ux", "uy", "uz"]):
+def gen_list_dof(model, dof_per_node):
     model.dof_per_node = dof_per_node
-    model.list_dof = {}
-    counter = 0
-    for node in model.nodes:
-        for dof in dof_per_node:
-            model.list_dof |= {str(int(node[0])) + dof: counter}
-            counter += 1
-    model.n_dof = len(model.list_dof)
+    model.list_dof = DofList(model.n_nodes, dof_per_node)
 
 
 def gen_rect_Quad4n(L, H, nx=20, ny=20):
@@ -65,8 +60,8 @@ def gen_rect_Tri3n(L, H, nx=20, ny=20):
     eid = 1
     for j in range(ny):
         for i in range(nx):
-            if i < 3 and j == 8:
-                continue
+            # if i < 3 and j == 8:
+            #     continue
             n1 = j * (nx + 1) + i + 1
             n2 = n1 + 1
             n3 = n2 + (nx + 1)
