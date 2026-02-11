@@ -26,8 +26,8 @@ class FEModel:
     def gen_list_dof(self, dof_per_node):
         model.gen_list_dof(self, dof_per_node=dof_per_node)
 
-    def cal_global_matrices(self, eval_mass=False, skip_elements={}):
-        asm.cal_KgMg(self, eval_mass=eval_mass, skip_elements=skip_elements)
+    def cal_global_matrices(self, elem, eval_mass=False, skip_elements={}):
+        asm.cal_KgMg(self, elem, eval_mass=eval_mass, skip_elements=skip_elements)
 
     def gen_dirichlet_bc(self, sel_condition, tol=1e-8):
         bc.gen_dirichlet_bc(self, sel_condition, tol=tol)

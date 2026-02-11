@@ -10,7 +10,7 @@ model = tf.FEModel(nodes, elements, materials, reals)
 
 # %% Finite element formulation
 model.gen_list_dof(dof_per_node=tf.DofType.UX | tf.DofType.UY)
-model.cal_global_matrices()
+model.cal_global_matrices(tf.Quad4n)
 
 
 # %% B.C. definition

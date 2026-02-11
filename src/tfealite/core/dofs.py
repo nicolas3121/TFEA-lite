@@ -25,22 +25,22 @@ class DofType(IntFlag):
     B4Z = auto()
 
 
-# BASE_DOFS: Final = DofType.UX | DofType.UY | DofType.UZ
-# HEAVISIDE_DOFS: Final = DofType.HX | DofType.HY | DofType.HZ
-# BRANCH_DOFS: Final = (
-#     DofType.B1X
-#     | DofType.B1Y
-#     | DofType.B1Z
-#     | DofType.B2X
-#     | DofType.B2Y
-#     | DofType.B2Z
-#     | DofType.B3X
-#     | DofType.B3Y
-#     | DofType.B3Z
-#     | DofType.B4X
-#     | DofType.B4Y
-#     | DofType.B4Z
-# )
+BASE_DOFS: Final = DofType.UX | DofType.UY | DofType.UZ
+HEAVISIDE_DOFS: Final = DofType.HX | DofType.HY | DofType.HZ
+BRANCH_DOFS: Final = (
+    DofType.B1X
+    | DofType.B1Y
+    | DofType.B1Z
+    | DofType.B2X
+    | DofType.B2Y
+    | DofType.B2Z
+    | DofType.B3X
+    | DofType.B3Y
+    | DofType.B3Z
+    | DofType.B4X
+    | DofType.B4Y
+    | DofType.B4Z
+)
 
 
 class DofList:
@@ -65,11 +65,49 @@ class DofList:
         assert res is not None, "node doesn't have requested dof"
         return res
 
+    def __len__(self):
+        return self.n_dof
+
+    def __bool__(self):
+        return self.n_dof != 0
+
     def update(self):
         total = np.cumsum(np.bitwise_count(self.list_dof))
         self.n_dof = total[-1]
         self.list_dof_number = np.zeros_like(self.list_dof)
         self.list_dof_number[1:] = total[:-1]
+
+    def get_elem_dof_numbers(self, nodes, mask):
+        nodes = np.asarray(nodes)
+        dofs = self.list_dof[nodes - 1]
+        selected = np.bitwise_and(dofs, mask)
+        preceding_mask = (selected[0] & ((~selected[0]) + 1)) - 1
+        offset = np.bitwise_count(dofs & preceding_mask)
+        assert np.all(selected - selected[0] == 0), (
+            "different number of dofs for different nodes within element"
+        )
+        dof_numbers = self.list_dof_number[nodes - 1]
+        return (
+            dof_numbers[:, None]
+            + offset[:, None]
+            + np.arange(selected[0].bit_count(), dtype=int)
+        )
+
+    def get_dofs(self, node):
+        return self.list_dof[node - 1]
+
+    # def set_dofs(self, node, dofs):
+    #     self.list_dof[node - 1] = dofs
+    #
+    def add_dofs(self, nodes, dofs):
+        self.list_dof[np.asarray(nodes) - 1] |= dofs
+
+    # def query_dofs(self, node, query):
+    #     return self.list_dof[node - 1] & query == query
+    #
+    # def query_nodes(self, query): ...
+    #
+    #
 
 
 IS_2D: Final = DofType.UX | DofType.UY

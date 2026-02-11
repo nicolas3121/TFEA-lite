@@ -9,7 +9,7 @@ def cal_Tetr4n_stresses(model):
     Ug = np.asarray(model.Ug, dtype=float)
     stresses = np.zeros((model.n_elements, 6), dtype=float)
     for element in model.elements:
-        eid, _, mat_id, _real_id, conn = element
+        eid, _, mat_id, real_id, conn = element
         Ue = np.zeros((4, 3), dtype=float)
         Ue[0, 0] = Ug[model.list_dof[(conn[0], DofType.UX)]]
         Ue[0, 1] = Ug[model.list_dof[(conn[0], DofType.UY)]]
@@ -26,7 +26,9 @@ def cal_Tetr4n_stresses(model):
         ele_vertices = np.zeros((4, 3))
         for jj in range(4):
             ele_vertices[jj, :] = model.nodes[int(conn[jj]) - 1, 1:4]
-        tetr = Tetr4n(ele_vertices, model.materials[mat_id - 1][1])
+        tetr = Tetr4n(
+            ele_vertices, model.materials[mat_id - 1][1], model.reals[real_id - 1][1]
+        )
         stresses[eid - 1, :] = tetr.cal_element_stress(Ue)
     return stresses
 

@@ -1,6 +1,7 @@
 import tfealite as tf
 import numpy as np
 
+
 # %% Model creation
 nodes, elements = tf.gen_rect_Tri3n(L=1.0, H=1.0)
 materials = [[1, {"E": 2e11, "nu": 0.33, "rho": 7850}]]
@@ -10,7 +11,7 @@ model = tf.FEModel(nodes, elements, materials, reals)
 
 # %% Finite element formulation
 model.gen_list_dof(dof_per_node=tf.DofType.UX | tf.DofType.UY)
-model.cal_global_matrices()
+model.cal_global_matrices(tf.Tri3n)
 
 
 # %% B.C. definition
