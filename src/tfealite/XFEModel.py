@@ -22,17 +22,28 @@ class XFEModel(FEModel):
         self.dof_per_node = dof_per_node
         model.gen_list_dof(self, dof_per_node)
         cut_elem = self.level_set[2]
+        partial_cut_elem = self.level_set[3]
         assert self.list_dof is not None
         for id in cut_elem:
             element = self.elements[id - 1]
             assert id == element[0]
             nodes = element[4]
             self.list_dof.add_dofs(nodes, dofs.IS_2D_HEAVISIDE)
+        for id in partial_cut_elem:
+            element = self.elements[id - 1]
+            assert id == element[0]
+            nodes = element[4]
+            self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
         self.list_dof.update()
 
-    def cal_global_matrices(self, elem, eval_mass=False, skip_elements={}):
+    def cal_global_matrices(self, elem, tip_enrich, eval_mass=False, skip_elements={}):
         asm.cal_KgMg(
-            self, elem, eval_mass=eval_mass, xfem=True, skip_elements=skip_elements
+            self,
+            elem,
+            eval_mass=eval_mass,
+            xfem=True,
+            tip_enrich=tip_enrich,
+            skip_elements=skip_elements,
         )
 
     def insert_crack_segment(self, p1: NDArray, p2: NDArray):

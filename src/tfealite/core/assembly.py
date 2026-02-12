@@ -3,11 +3,14 @@ import scipy as sp
 from .dofs import BASE_DOFS, HEAVISIDE_DOFS, BRANCH_DOFS
 
 
-def cal_KgMg(model, elem_func, eval_mass=False, xfem=False, skip_elements={}):
+def cal_KgMg(
+    model, elem_func, eval_mass=False, xfem=False, tip_enrich=False, skip_elements={}
+):
     print("=> Start evaluating stiffness matrix:")
     Kg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
     if xfem:
         cut_elem = set(model.level_set[2])
+        partial_cut_elem = set(model.level_set[3])
     if eval_mass:
         Mg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
     for i_e, ele_info in enumerate(model.elements):
@@ -26,9 +29,14 @@ def cal_KgMg(model, elem_func, eval_mass=False, xfem=False, skip_elements={}):
             phi_n = model.level_set[0][elem_nodes - 1]
             phi_t = model.level_set[1][elem_nodes - 1]
             h_enrich = ele_info[0] in cut_elem
-            t_enrich = False
             if h_enrich:
                 mask |= HEAVISIDE_DOFS
+            t_enrich = False
+            if tip_enrich:
+                t_enrich = ele_info[0] in partial_cut_elem
+                if t_enrich and not h_enrich:
+                    mask |= BRANCH_DOFS
+            # print(ele_info[0], h_enrich, t_enrich)
             elem = elem_func(
                 elem_vertices,
                 phi_n,
@@ -58,6 +66,26 @@ def cal_KgMg(model, elem_func, eval_mass=False, xfem=False, skip_elements={}):
                 ).flatten(),
             )
         )
+        print(
+            "base",
+            model.list_dof.get_elem_dof_numbers(elem_nodes, mask & BASE_DOFS).flatten(),
+        )
+        print(
+            "heaviside",
+            model.list_dof.get_elem_dof_numbers(
+                elem_nodes, mask & HEAVISIDE_DOFS
+            ).flatten(),
+        )
+        print(
+            "branch",
+            model.list_dof.get_elem_dof_numbers(
+                elem_nodes, mask & BRANCH_DOFS
+            ).flatten(),
+        )
+        print("nodes", elem_nodes)
+        print("DOFs", DOFs)
+        print(model.list_dof.list_dof_number)
+        print(model.list_dof.list_dof)
         for ii in range(Ke.shape[0]):
             for jj in range(Ke.shape[0]):
                 Kg[DOFs[ii], DOFs[jj]] += Ke[ii, jj]
