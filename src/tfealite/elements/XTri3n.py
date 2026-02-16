@@ -1,4 +1,5 @@
 from .Tri3n import Tri3n
+from ..core import quadratures as qd
 from typing import Final
 import numpy as np
 
@@ -46,21 +47,10 @@ class XTri3n(Tri3n):
         J = dN_dxi @ x_e
         detJ = np.linalg.det(J)
 
-        B = np.zeros((3, 6))
         dN_dxy = np.linalg.solve(J, dN_dxi)
-        B[0, ::2] = dN_dxy[0, :]
-        B[1, 1::2] = dN_dxy[1, :]
-        B[2, ::2] = dN_dxy[1, :]
-        B[2, 1::2] = dN_dxy[0, :]
-        # for i in range(3):
-        #     ix = 2 * i
-        #     iy = 2 * i + 1
-        #     B[0, ix] = dN_dxy[0, i]
-        #     B[1, iy] = dN_dxy[1, i]
-        #     B[2, ix] = dN_dxy[1, i]
-        #     B[2, iy] = dN_dxy[0, i]
+        B = cal_B(dN_dxy)
 
-        Ke[0:6, 0:6] = B.T @ self.C @ B
+        Ke[0:6, 0:6] = B.T @ self.C @ B * weight * detJ * self.t
 
         Nc = np.zeros((NODES, 3))
         # 4 exceptions
@@ -68,83 +58,37 @@ class XTri3n(Tri3n):
         # valt samen met een zijde --> oneindig veel oplossingen --> kan willekeurig punt kiezen eg 1 van de vertices
         # parallel aan zijde --> geen oplossing --> kies 1 van de vertices als 1, andere 0
         # gaat door een node
-        for i in range(3):
-            j = (i + 1) % 3
-            phi_i = self.phi_n[i]
-            phi_j = self.phi_n[j]
-            if np.isclose(phi_i, 0) or np.isclose(phi_i, phi_j):
-                Nc[j, i] = 0
-                Nc[i, i] = 1
-            else:
-                Nc[j, i] = np.clip(1 / (1 - phi_j / phi_i), 0, 1)
-                Nc[i, i] = np.clip(1 - Nc[j, i], 0, 1)
+        if self.h_enrich or self.partial_cut:
+            for i in range(3):
+                j = (i + 1) % 3
+                phi_i = self.phi_n[i]
+                phi_j = self.phi_n[j]
+                if np.isclose(phi_i, 0) or np.isclose(phi_i, phi_j):
+                    Nc[j, i] = 0
+                    Nc[i, i] = 1
+                else:
+                    Nc[j, i] = np.clip(1 / (1 - phi_j / phi_i), 0, 1)
+                    Nc[i, i] = np.clip(1 - Nc[j, i], 0, 1)
         if self.partial_cut:
-            x, w = np.polynomial.legendre.leggauss(8)
-            print(x.shape)
-            x = (1 + x) / 2
-            w /= 2
-            Ni_template = np.zeros((3, 3))
-            Ni_template[:, 0] = np.linalg.solve(
-                np.array([self.phi_t, self.phi_n, [1, 1, 1]]), np.array([0, 0, 1])
-            )
-            for i in range(6):  # singularity verplaatst naar 1ste vertex
-                Ni = Ni_template.copy()
-                Ni[int((i % 5 + 1) / 2), 1 + i % 2] = 1
-                Ni[:, 2 - i % 2] = Nc[:, int(i / 2)]
-                detJi = np.linalg.det(Ni)
-                if np.isclose(detJi, 0):
-                    continue
-                for u0, w1 in zip(x, w):
-                    for v0, w2 in zip(x, w):
-                        beta = 1
-                        w_eff = w1 * w2 * beta * u0 ** (2 * beta - 1)
-                        u = u0**beta
-                        n = np.array([2 * u, u * (1 - v0), u * v0])
-                        xi_sub, eta_sub = np.linalg.solve(
-                            J.T, x_e.T @ Ni @ n - x_e[0, :]
-                        )
-                        N_sub, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
-                        dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-                        TIP_B = np.zeros((3, TIP_DOFS))
-                        begin_tip = N_FN + int(self.h_enrich) * H_FN
-                        TIP_B[0, ::DOFS] = dN_dxy_sub[0, begin_tip:]
-                        TIP_B[1, 1::DOFS] = dN_dxy_sub[1, begin_tip:]
-                        TIP_B[2, ::DOFS] = dN_dxy_sub[1, begin_tip:]
-                        TIP_B[2, 1::DOFS] = dN_dxy_sub[0, begin_tip:]
-                        # print(TIP_B.shape, self.C.shape)
-                        begin_tip *= DOFS
-                        Ke[begin_tip:, begin_tip:] += (
-                            (TIP_B.T @ self.C @ TIP_B) * w_eff * detJi
-                        )
-                        beta = 2
-                        w_eff = w1 * w2 * beta * u0 ** (2 * beta - 1)
-                        u = u0**beta
-                        n = np.array([2 * u, u * (1 - v0), u * v0])
-                        xi_sub, eta_sub = np.linalg.solve(
-                            J.T, x_e.T @ Ni @ n - x_e[0, :]
-                        )
-                        N_sub, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
-                        dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-                        TIP_B = np.zeros((3, TIP_DOFS))
-                        begin_tip = N_FN + int(self.h_enrich) * H_FN
-                        TIP_B[0, ::DOFS] = dN_dxy_sub[0, begin_tip:]
-                        TIP_B[1, 1::DOFS] = dN_dxy_sub[1, begin_tip:]
-                        TIP_B[2, ::DOFS] = dN_dxy_sub[1, begin_tip:]
-                        TIP_B[2, 1::DOFS] = dN_dxy_sub[0, begin_tip:]
-                        # print(TIP_B.shape, self.C.shape)
-                        begin_tip *= DOFS
-                        Ke[0:begin_tip, begin_tip:] += (
-                            (B.T @ self.C @ TIP_B) * w_eff * detJi
-                        )
-                        Ke[begin_tip:, 0:begin_tip] += (
-                            (TIP_B.T @ self.C @ B) * w_eff * detJi
-                        )
-
-                # zorgen dat alle punten voor sub triangle 1 keer berekent worden en dan voor alle nodige integraties gebruikt worden
-                # momenteel is crack tip 3de node moet eerste worden --> cyclisch doorschuiven
+            self._integrate_partial_cut(Ke, Nc, J, detJ, B)
+        elif self.t_enrich and not self.h_enrich:
+            (rule, correction) = qd.TRI_RULES[10]
+            begin_tip_fn = N_FN
+            begin_tip_dofs = N_DOFS
+            for [xi, eta, w] in rule:
+                N, dN_dxi = self.shape_functions(xi, eta)
+                dN_dxy = np.linalg.solve(J, dN_dxi)
+                TIP_B = cal_B(dN_dxy[:, begin_tip_fn:])
+                w_eff = w * correction * detJ * self.t
+                Ke[begin_tip_dofs:, begin_tip_dofs:] += TIP_B.T @ self.C @ TIP_B * w_eff
+                res = B.T @ self.C @ TIP_B * w_eff
+                Ke[0:begin_tip_dofs, begin_tip_dofs:] += res
+                Ke[begin_tip_dofs:, 0:begin_tip_dofs] += res.T
         else:
-            # print("Xe\n", x_e)
-            # print("Nc\n", Nc)
+            begin_h_fn = N_FN
+            begin_tip_fn = N_FN + H_FN
+            begin_h_dofs = N_DOFS
+            begin_tip_dofs = N_DOFS + H_DOFS
             for i in range(4):
                 if i != 3:
                     Ni = np.eye(3)
@@ -152,32 +96,87 @@ class XTri3n(Tri3n):
                     Ni[:, (i + 2) % 3] = Nc[:, (i + 2) % 3]
                 else:
                     Ni = Nc.copy()
-                # print("Ni\n", Ni)
                 detJi = np.linalg.det(Ni)
-                # print("detJi", detJi)
-                # if np.isclose(detJi, 0):
-                #     continue
+                if np.isclose(detJi, 0):
+                    continue
                 xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ N - x_e[0, :])
                 _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-                # h_shifted = (
-                #     np.sign(np.dot(self.phi_n, N_sub)) - np.sign(self.phi_n)
-                # ) / 2
-                HB = np.zeros_like(B)
-                HB[0, ::DOFS] = dN_dxy_sub[0, 3:6]
-                HB[1, 1::DOFS] = dN_dxy_sub[1, 3:6]
-                HB[2, ::DOFS] = dN_dxy_sub[1, 3:6]
-                HB[2, 1::DOFS] = dN_dxy_sub[0, 3:6]
-                print(B.T @ self.C @ HB)
-                Ke[6:12, 6:12] += (HB.T @ self.C @ HB) * detJi
-                Ke[0:6, 6:12] += (B.T @ self.C @ HB) * detJi
-                Ke[6:12, 0:6] += (HB.T @ self.C @ B) * detJi
-            Ke *= detJ * weight * self.t
-
+                HB = cal_B(dN_dxy_sub[:, begin_h_fn:begin_tip_fn])
+                w_eff = detJi * detJ * weight * self.t
+                Ke[begin_h_dofs:begin_tip_dofs, begin_h_dofs:begin_tip_dofs] += (
+                    HB.T @ self.C @ HB
+                ) * w_eff
+                res = (B.T @ self.C @ HB) * w_eff
+                Ke[0:begin_h_dofs, begin_h_dofs:begin_tip_dofs] += res
+                Ke[begin_h_dofs:begin_tip_dofs, 0:begin_h_dofs] += res.T
+                if self.t_enrich:
+                    (rule, correction) = qd.TRI_RULES[10]
+                    for [xi, eta, w] in rule:
+                        _, dN_dxi_sub = self.shape_functions(xi, eta)
+                        dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+                        TIP_B = cal_B(dN_dxy_sub[:, begin_tip_fn:])
+                        w_eff = w * correction * detJ * detJi * self.t
+                        Ke[begin_tip_dofs:, begin_tip_dofs:] += (
+                            TIP_B.T @ self.C @ TIP_B * w_eff
+                        )
+                        res = B.T @ self.C @ TIP_B * w_eff
+                        Ke[0:begin_h_dofs, begin_tip_dofs:] += res
+                        Ke[begin_tip_dofs:, 0:begin_h_dofs] += res.T
+                        res = HB.T @ self.C @ TIP_B * w_eff
+                        Ke[begin_h_dofs:begin_tip_dofs, begin_tip_dofs:] += res
+                        Ke[begin_tip_dofs:, begin_h_dofs:begin_tip_dofs] += res.T
         if eval_mass:
             raise NotImplementedError
         else:
             return Ke
+
+    def _integrate_partial_cut(self, Ke, Nc, J, detJ, B):
+        x_e = self.node_coords
+        (rule, correction) = qd.QUAD_RULES[10]
+        rule = rule.copy()
+        # rescale from standard quad to unit quad
+        rule[:, 0:2] = (1 + rule[:, 0:2]) / 2
+        rule[:, 2] /= 4
+        Ni_template = np.zeros((3, 3))
+        Ni_template[:, 0] = np.linalg.solve(
+            np.array([self.phi_t, self.phi_n, [1, 1, 1]]), np.array([0, 0, 1])
+        )
+        for i in range(6):  # singularity verplaatst naar 1ste vertex
+            Ni = Ni_template.copy()
+            Ni[int((i % 5 + 1) / 2), 1 + i % 2] = 1
+            Ni[:, 2 - i % 2] = Nc[:, int(i / 2)]
+            detJi = np.linalg.det(Ni)
+            if detJi < 0:
+                print("DetJi smaller than 0")
+            if np.isclose(detJi, 0):
+                continue
+            x_e_i = (x_e.T @ Ni).T
+            duffy = DuffyDistance(x_e_i)
+            for [u, v, w] in rule:
+                [xi_d, eta_d, w_d] = duffy.transform(u, v, beta=1)
+                w_eff = w * correction * w_d * self.t * detJi * detJ
+                n, _ = super().shape_functions(xi_d, eta_d)
+                xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ n - x_e[0, :])
+                _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+                dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+                begin_tip = N_FN + int(self.h_enrich) * H_FN
+                TIP_B = cal_B(dN_dxy_sub[:, begin_tip:])
+                begin_tip *= DOFS
+                Ke[begin_tip:, begin_tip:] += (TIP_B.T @ self.C @ TIP_B) * w_eff
+
+                [xi_d, eta_d, w_d] = duffy.transform(u, v, beta=1)
+                w_eff = w * correction * w_d * self.t * detJi * detJ
+                n, _ = super().shape_functions(xi_d, eta_d)
+                xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ n - x_e[0, :])
+                _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+                dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+                begin_tip = N_FN + int(self.h_enrich) * H_FN
+                TIP_B = cal_B(dN_dxy_sub[:, begin_tip:])
+                # print(TIP_B.shape, self.C.shape)
+                begin_tip *= DOFS
+                Ke[0:begin_tip, begin_tip:] += (B.T @ self.C @ TIP_B) * w_eff
+                Ke[begin_tip:, 0:begin_tip] += (TIP_B.T @ self.C @ B) * w_eff
 
     # TODO: compatibel maken met xi, eta als arrays
     def shape_functions(self, xi, eta):
@@ -189,8 +188,8 @@ class XTri3n(Tri3n):
             )
         )
         (N[:N_FN], dN_dxi[:, :N_FN]) = super().shape_functions(xi, eta)
-        print("phi_n", self.phi_n)
-        print("phi_t", self.phi_t)
+        # print("phi_n", self.phi_n)
+        # print("phi_t", self.phi_t)
         phi_n = np.dot(self.phi_n, N[:N_FN])
         phi_t = np.dot(self.phi_t, N[:N_FN])
         if self.h_enrich:
@@ -261,6 +260,7 @@ class XTri3n(Tri3n):
         return N, dN_dxi
 
     def stresses_at_nodes(self, Ue):
+        Ue = np.asanyarray(Ue, dtype=float).ravel()
         raise NotImplementedError
 
 
@@ -273,3 +273,78 @@ def branch_functions(sqrt_r, theta):
             np.cos(theta / 2) * np.sin(theta),
         ]
     )
+
+
+def cal_B(dN_dxy):
+    B = np.zeros((3, DOFS * dN_dxy.shape[1]))
+    B[0, ::DOFS] = dN_dxy[0, :]
+    B[1, 1::DOFS] = dN_dxy[1, :]
+    B[2, ::DOFS] = dN_dxy[1, :]
+    B[2, 1::DOFS] = dN_dxy[0, :]
+    return B
+
+
+class GeneralizedDuffy:
+    def __init__(self, _x_e):
+        pass
+
+    def transform(self, u, v, beta):
+        u_d = u**beta
+        v_d = v
+        j_d = beta * u ** (2 * beta - 1)
+        xi_ddt = u_d * (1 - v_d)
+        eta_ddt = u_d * v_d
+        return np.asarray([xi_ddt, eta_ddt, j_d])
+
+
+class DuffyDistance:
+    def __init__(self, x_e):
+        r21 = x_e[0] - x_e[1]
+        r23 = x_e[2] - x_e[1]
+        self.vp = np.dot(r21, r23) / np.dot(r23, r23)
+        r2p = r23 * self.vp
+        # self.vp = np.linalg.norm(r2p) / np.linalg.norm(r23)
+        r1p = x_e[1] + r2p - x_e[0]
+        self.d = np.linalg.norm(r1p) / np.linalg.norm(r23)
+        self.s_min = np.log(np.sqrt(self.vp**2 + self.d**2) - self.vp)
+        self.s_max = np.log(np.sqrt((1 - self.vp) ** 2 + self.d**2) + (1 - self.vp))
+
+    def transform(self, u, v, beta):
+        u_ddt = u**beta
+        s = self.s_min + v * (self.s_max - self.s_min)
+        v_ddt = (np.exp(s) - self.d**2 * np.exp(-s)) / 2 + self.vp
+        j_ddt = (
+            beta
+            * u ** (2 * beta - 1)
+            * np.sqrt((v_ddt - self.vp) ** 2 + self.d**2)
+            * (self.s_max - self.s_min)
+        )
+        xi_ddt = u_ddt * (1 - v_ddt)
+        eta_ddt = u_ddt * v_ddt
+        return np.asarray([xi_ddt, eta_ddt, j_ddt])
+
+
+class DuffySinh:
+    def __init__(self, x_e):
+        r21 = x_e[0] - x_e[1]
+        r23 = x_e[2] - x_e[1]
+        self.vp = np.dot(r21, r23) / np.dot(r23, r23)
+        r2p = r23 * self.vp
+        # self.vp = np.linalg.norm(r2p) / np.linalg.norm(r23)
+        r1p = x_e[1] + r2p - x_e[0]
+        self.d = np.linalg.norm(r1p) / np.linalg.norm(r23)
+        self.s_min = np.arcsinh(-self.vp / self.d)
+        self.s_max = np.arcsinh((1 - self.vp) / self.d)
+
+    def transform(self, u, v, beta):
+        u_sinh = u**beta
+        s = self.s_min + v * (self.s_max - self.s_min)
+        v_sinh = self.vp + self.d * np.sinh(s)
+        j_sinh = self.d * np.cosh(s) * (self.s_max - self.s_min)
+        j_sinh = (
+            beta * u ** (2 * beta - 1) * self.d * np.cosh(s) * (self.s_max - self.s_min)
+        )
+
+        xi = u_sinh * (1 - v_sinh)
+        eta = u_sinh * v_sinh
+        return np.asarray([xi, eta, j_sinh])
