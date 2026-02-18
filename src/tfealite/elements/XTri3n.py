@@ -15,18 +15,36 @@ TIP_DOFS: Final = DOFS * TIP_FN
 
 
 class XTri3n(Tri3n):
+    def __new__(
+        cls,
+        node_coords,
+        material,
+        real,
+        phi_n=None,
+        phi_t=None,
+        h_enrich: bool = False,
+        t_enrich: bool = False,
+        partial_cut: bool = False,
+    ):
+        if not h_enrich and not t_enrich:
+            print("creating basic element instead")
+            return Tri3n(node_coords, material, real)
+        return super().__new__(cls)
+
     def __init__(
         self,
         node_coords,
-        phi_n,
-        phi_t,
-        h_enrich: bool,
-        t_enrich: bool,
-        partial_cut: bool,
         material,
         real,
+        phi_n=None,
+        phi_t=None,
+        h_enrich: bool = False,
+        t_enrich: bool = False,
+        partial_cut: bool = False,
     ):
         super().__init__(node_coords, material, real)
+        assert h_enrich is not None
+        assert t_enrich is not None
         self.phi_n = phi_n
         self.phi_t = phi_t
         self.h_enrich = h_enrich
@@ -34,8 +52,6 @@ class XTri3n(Tri3n):
         self.partial_cut = partial_cut
 
     def cal_element_matrices(self, eval_mass=False):
-        if not self.h_enrich and not self.t_enrich:
-            return super().cal_element_matrices(eval_mass)
         n = N_DOFS + int(self.h_enrich) * H_DOFS + int(self.t_enrich) * TIP_DOFS
         Ke = np.zeros((n, n))
         x_e = self.node_coords

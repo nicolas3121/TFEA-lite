@@ -1,6 +1,7 @@
 import numpy as np
 import scipy as sp
 from .dofs import BASE_DOFS, HEAVISIDE_DOFS, BRANCH_DOFS
+from .level_set import CutType
 
 
 def cal_KgMg(
@@ -8,9 +9,11 @@ def cal_KgMg(
 ):
     print("=> Start evaluating stiffness matrix:")
     Kg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
+    cut_info = None
+    ci = None
     if xfem:
-        cut_elem = set(model.level_set[2])
-        partial_cut_elem = set(model.level_set[3])
+        cut_info = model.cut_info
+        print(cut_info)
     if eval_mass:
         Mg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
     for i_e, ele_info in enumerate(model.elements):
@@ -26,26 +29,29 @@ def cal_KgMg(
         real = model.reals[real_ie - 1][1]
         mask = BASE_DOFS
         if xfem:
-            phi_n = model.level_set[0][elem_nodes - 1]
-            phi_t = model.level_set[1][elem_nodes - 1]
-            h_enrich = ele_info[0] in cut_elem
+            assert cut_info
+            ci = cut_info.get(ele_info[0])
+        if ci is not None:
+            print("enriched element")
+            (ls, cut_type, tip) = ci
+            phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
+            h_enrich = cut_type == CutType.CUT
             if h_enrich:
                 mask |= HEAVISIDE_DOFS
-            t_enrich = False
+            t_enrich = tip is not None and tip_enrich
             if tip_enrich:
-                t_enrich = ele_info[0] in partial_cut_elem
-                if t_enrich and not h_enrich:
-                    mask |= BRANCH_DOFS
-            # print(ele_info[0], h_enrich, t_enrich)
+                mask |= BRANCH_DOFS
+            partial_cut = cut_type == CutType.PARTIAL and tip_enrich
+
             elem = elem_func(
                 elem_vertices,
+                material,
+                real,
                 phi_n,
                 phi_t,
                 h_enrich,
                 t_enrich,
-                t_enrich,
-                material,
-                real,
+                partial_cut,
             )
         else:
             elem = elem_func(elem_vertices, material, real)
@@ -66,26 +72,26 @@ def cal_KgMg(
                 ).flatten(),
             )
         )
-        print(
-            "base",
-            model.list_dof.get_elem_dof_numbers(elem_nodes, mask & BASE_DOFS).flatten(),
-        )
-        print(
-            "heaviside",
-            model.list_dof.get_elem_dof_numbers(
-                elem_nodes, mask & HEAVISIDE_DOFS
-            ).flatten(),
-        )
-        print(
-            "branch",
-            model.list_dof.get_elem_dof_numbers(
-                elem_nodes, mask & BRANCH_DOFS
-            ).flatten(),
-        )
-        print("nodes", elem_nodes)
-        print("DOFs", DOFs)
-        print(model.list_dof.list_dof_number)
-        print(model.list_dof.list_dof)
+        # print(
+        #     "base",
+        #     model.list_dof.get_elem_dof_numbers(elem_nodes, mask & BASE_DOFS).flatten(),
+        # )
+        # print(
+        #     "heaviside",
+        #     model.list_dof.get_elem_dof_numbers(
+        #         elem_nodes, mask & HEAVISIDE_DOFS
+        #     ).flatten(),
+        # )
+        # print(
+        #     "branch",
+        #     model.list_dof.get_elem_dof_numbers(
+        #         elem_nodes, mask & BRANCH_DOFS
+        #     ).flatten(),
+        # )
+        # print("nodes", elem_vertices)
+        # print("DOFs", DOFs)
+        # print(model.list_dof.list_dof_number)
+        # print(model.list_dof.list_dof)
         for ii in range(Ke.shape[0]):
             for jj in range(Ke.shape[0]):
                 Kg[DOFs[ii], DOFs[jj]] += Ke[ii, jj]
