@@ -77,21 +77,49 @@ class DofList:
         self.list_dof_number = np.zeros_like(self.list_dof)
         self.list_dof_number[1:] = total[:-1]
 
+    def get_elem_dofs(self, nodes):
+        nodes = np.asarray(nodes)
+        dofs = self.list_dof[nodes - 1]
+        return dofs
+
     def get_elem_dof_numbers(self, nodes, mask):
         nodes = np.asarray(nodes)
         dofs = self.list_dof[nodes - 1]
         selected = np.bitwise_and(dofs, mask)
         preceding_mask = (selected[0] & ((~selected[0]) + 1)) - 1
         offset = np.bitwise_count(dofs & preceding_mask)
-        assert np.all(selected - selected[0] == 0), (
-            "different number of dofs for different nodes within element"
-        )
         dof_numbers = self.list_dof_number[nodes - 1]
         return (
             dof_numbers[:, None]
             + offset[:, None]
             + np.arange(selected[0].bit_count(), dtype=int)
         )
+
+    def get_elem_dof_numbers_flat(self, nodes, mask):
+        nodes = np.asarray(nodes)
+        dofs = self.list_dof[nodes - 1]
+        selected = np.bitwise_and(dofs, mask)
+        preceding_mask = (selected & ((~selected) + 1)) - 1
+        offset = np.bitwise_count(dofs & preceding_mask)
+        dof_numbers = self.list_dof_number[nodes - 1]
+        start = dof_numbers + offset
+        selected_count = np.bitwise_count(selected)
+        if np.any(selected):
+            return np.concatenate(
+                [
+                    start[i] + np.arange(selected_count[i], dtype=int)
+                    for i in range(len(nodes))
+                    if selected_count[i] != 0
+                ]
+            )
+        else:
+            return np.array([], dtype=int)
+
+        # return np(
+        #     dof_numbers[:, None]
+        #     + offset[:, None]
+        #     + np.arange(selected[0].bit_count(), dtype=int)
+        # )
 
     def get_dofs(self, node):
         return self.list_dof[node - 1]
@@ -101,6 +129,9 @@ class DofList:
     #
     def add_dofs(self, nodes, dofs):
         self.list_dof[np.asarray(nodes) - 1] |= dofs
+
+    def remove_dofs(self, nodes, dofs):
+        self.list_dof[np.asarray(nodes) - 1] &= ~dofs
 
     # def query_dofs(self, node, query):
     #     return self.list_dof[node - 1] & query == query
@@ -122,6 +153,7 @@ IS_2D_BRANCH: Final = (
     | DofType.B4X
     | DofType.B4Y
 )
+IS_2D_ALL = IS_2D | IS_2D_HEAVISIDE | IS_2D_BRANCH
 
 
 IS_3D: Final = DofType.UX | DofType.UY | DofType.UZ
@@ -140,3 +172,4 @@ IS_3D_BRANCH: Final = (
     | DofType.B4Y
     | DofType.B4Z
 )
+IS_3D_ALL = IS_3D | IS_3D_HEAVISIDE | IS_3D_BRANCH

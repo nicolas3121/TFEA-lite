@@ -44,14 +44,22 @@ class XFEModel(FEModel):
                         self.list_dof.add_dofs(nodes, dofs.IS_2D_HEAVISIDE)
                         if self.tip_enrichment:
                             in_range, tip = ls.in_range(elem, self.geometrical_range)
-                            self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                            if in_range:
+                                self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
                         self.cut_info[id] = (i, cut_type, tip)
                 else:
                     if self.tip_enrichment:
                         in_range, tip = ls.in_range(elem, self.geometrical_range)
                         if in_range:
                             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
-                        self.cut_info[id] = (i, CutType.NONE, tip)
+                            self.cut_info[id] = (i, CutType.NONE, tip)
+        for elem_id, ci in self.cut_info.items():
+            _, cut_type, _ = ci
+            print(cut_type)
+            if cut_type == CutType.PARTIAL:
+                nodes = self.elements[elem_id - 1][4]
+                self.list_dof.remove_dofs(nodes, dofs.IS_2D_HEAVISIDE)
+
         self.list_dof.update()
 
     # def gen_list_dof(self, dof_per_node):

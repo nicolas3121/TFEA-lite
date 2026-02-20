@@ -1,6 +1,72 @@
 import numpy as np
 
 
+class GeneralizedDuffy:
+    def __init__(self, _x_e):
+        pass
+
+    def transform(self, u, v, beta):
+        u_d = u**beta
+        v_d = v
+        j_d = beta * u ** (2 * beta - 1)
+        xi_ddt = u_d * (1 - v_d)
+        eta_ddt = u_d * v_d
+        return np.asarray([xi_ddt, eta_ddt, j_d])
+
+
+class DuffyDistance:
+    def __init__(self, x_e):
+        r21 = x_e[0] - x_e[1]
+        r23 = x_e[2] - x_e[1]
+        self.vp = np.dot(r21, r23) / np.dot(r23, r23)
+        r2p = r23 * self.vp
+        # self.vp = np.linalg.norm(r2p) / np.linalg.norm(r23)
+        r1p = x_e[1] + r2p - x_e[0]
+        self.d = np.linalg.norm(r1p) / np.linalg.norm(r23)
+        self.s_min = np.log(np.sqrt(self.vp**2 + self.d**2) - self.vp)
+        self.s_max = np.log(np.sqrt((1 - self.vp) ** 2 + self.d**2) + (1 - self.vp))
+
+    def transform(self, u, v, beta):
+        u_ddt = u**beta
+        s = self.s_min + v * (self.s_max - self.s_min)
+        v_ddt = (np.exp(s) - self.d**2 * np.exp(-s)) / 2 + self.vp
+        j_ddt = (
+            beta
+            * u ** (2 * beta - 1)
+            * np.sqrt((v_ddt - self.vp) ** 2 + self.d**2)
+            * (self.s_max - self.s_min)
+        )
+        xi_ddt = u_ddt * (1 - v_ddt)
+        eta_ddt = u_ddt * v_ddt
+        return np.asarray([xi_ddt, eta_ddt, j_ddt])
+
+
+class DuffySinh:
+    def __init__(self, x_e):
+        r21 = x_e[0] - x_e[1]
+        r23 = x_e[2] - x_e[1]
+        self.vp = np.dot(r21, r23) / np.dot(r23, r23)
+        r2p = r23 * self.vp
+        # self.vp = np.linalg.norm(r2p) / np.linalg.norm(r23)
+        r1p = x_e[1] + r2p - x_e[0]
+        self.d = np.linalg.norm(r1p) / np.linalg.norm(r23)
+        self.s_min = np.arcsinh(-self.vp / self.d)
+        self.s_max = np.arcsinh((1 - self.vp) / self.d)
+
+    def transform(self, u, v, beta):
+        u_sinh = u**beta
+        s = self.s_min + v * (self.s_max - self.s_min)
+        v_sinh = self.vp + self.d * np.sinh(s)
+        j_sinh = self.d * np.cosh(s) * (self.s_max - self.s_min)
+        j_sinh = (
+            beta * u ** (2 * beta - 1) * self.d * np.cosh(s) * (self.s_max - self.s_min)
+        )
+
+        xi = u_sinh * (1 - v_sinh)
+        eta = u_sinh * v_sinh
+        return np.asarray([xi, eta, j_sinh])
+
+
 TRI_RULES = {
     1: (np.array([[1.0 / 3.0, 1.0 / 3.0, 0.5]]), 1.0),
     2: (

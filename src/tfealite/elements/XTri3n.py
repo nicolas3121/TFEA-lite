@@ -1,6 +1,9 @@
 from .Tri3n import Tri3n
 from ..core import quadratures as qd
 from typing import Final
+from ..core.quadratures import DuffyDistance
+from .utils import cal_B_2d as cal_B
+from .utils import branch_functions
 import numpy as np
 
 NODES: Final = 3
@@ -29,6 +32,8 @@ class XTri3n(Tri3n):
         if not h_enrich and not t_enrich:
             print("creating basic element instead")
             return Tri3n(node_coords, material, real)
+        assert h_enrich is not None
+        assert t_enrich is not None
         return super().__new__(cls)
 
     def __init__(
@@ -36,15 +41,13 @@ class XTri3n(Tri3n):
         node_coords,
         material,
         real,
-        phi_n=None,
-        phi_t=None,
-        h_enrich: bool = False,
-        t_enrich: bool = False,
-        partial_cut: bool = False,
+        phi_n,
+        phi_t,
+        h_enrich: bool,
+        t_enrich: bool,
+        partial_cut: bool,
     ):
         super().__init__(node_coords, material, real)
-        assert h_enrich is not None
-        assert t_enrich is not None
         self.phi_n = phi_n
         self.phi_t = phi_t
         self.h_enrich = h_enrich
@@ -117,6 +120,8 @@ class XTri3n(Tri3n):
                     continue
                 xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ N - x_e[0, :])
                 _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+                print("shape_functions", _)
+                print("derivative", dN_dxi_sub)
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
                 HB = cal_B(dN_dxy_sub[:, begin_h_fn:begin_tip_fn])
                 w_eff = detJi * detJ * weight * self.t
@@ -218,16 +223,16 @@ class XTri3n(Tri3n):
             r = np.sqrt(phi_n**2 + phi_t**2)
             sqrt_r = np.sqrt(r)
             sqrt_r_i = (self.phi_n**2 + self.phi_t**2) ** (1 / 4)
-            theta = np.atan2(phi_n, -phi_t)
-            theta_i = np.atan2(self.phi_n, -self.phi_t)
+            theta = np.atan2(phi_n, phi_t)
+            theta_i = np.atan2(self.phi_n, self.phi_t)
             dphi_n_dxi = np.sum(self.phi_n * dN_dxi[:, :N_FN], axis=1)
             dphi_t_dxi = np.sum(self.phi_t * dN_dxi[:, :N_FN], axis=1)
-            # sin(theta) = phi_n / r, cos(theta) = -phi_t / r
+            # sin(theta) = phi_n / r, cos(theta) = phi_t / r
             dr_dxi = (
                 1 / r * (phi_n * dphi_n_dxi + phi_t * dphi_t_dxi)
             )  # = np.sin(theta) * dphi_n_dxi - np.cos(theta) * dphi_t_dxi
-            dtheta_dxi = (
-                -1 * (dphi_n_dxi * phi_t - phi_n * dphi_t_dxi) / (phi_t**2 + phi_n**2)
+            dtheta_dxi = (dphi_n_dxi * phi_t - phi_n * dphi_t_dxi) / (
+                phi_t**2 + phi_n**2
             )  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
             bf = branch_functions(sqrt_r, theta)
             bf_i = branch_functions(sqrt_r_i, theta_i)
@@ -278,89 +283,3 @@ class XTri3n(Tri3n):
     def stresses_at_nodes(self, Ue):
         Ue = np.asanyarray(Ue, dtype=float).ravel()
         raise NotImplementedError
-
-
-def branch_functions(sqrt_r, theta):
-    return sqrt_r * np.array(
-        [
-            np.cos(theta / 2),
-            np.sin(theta / 2),
-            np.sin(theta / 2) * np.sin(theta),
-            np.cos(theta / 2) * np.sin(theta),
-        ]
-    )
-
-
-def cal_B(dN_dxy):
-    B = np.zeros((3, DOFS * dN_dxy.shape[1]))
-    B[0, ::DOFS] = dN_dxy[0, :]
-    B[1, 1::DOFS] = dN_dxy[1, :]
-    B[2, ::DOFS] = dN_dxy[1, :]
-    B[2, 1::DOFS] = dN_dxy[0, :]
-    return B
-
-
-class GeneralizedDuffy:
-    def __init__(self, _x_e):
-        pass
-
-    def transform(self, u, v, beta):
-        u_d = u**beta
-        v_d = v
-        j_d = beta * u ** (2 * beta - 1)
-        xi_ddt = u_d * (1 - v_d)
-        eta_ddt = u_d * v_d
-        return np.asarray([xi_ddt, eta_ddt, j_d])
-
-
-class DuffyDistance:
-    def __init__(self, x_e):
-        r21 = x_e[0] - x_e[1]
-        r23 = x_e[2] - x_e[1]
-        self.vp = np.dot(r21, r23) / np.dot(r23, r23)
-        r2p = r23 * self.vp
-        # self.vp = np.linalg.norm(r2p) / np.linalg.norm(r23)
-        r1p = x_e[1] + r2p - x_e[0]
-        self.d = np.linalg.norm(r1p) / np.linalg.norm(r23)
-        self.s_min = np.log(np.sqrt(self.vp**2 + self.d**2) - self.vp)
-        self.s_max = np.log(np.sqrt((1 - self.vp) ** 2 + self.d**2) + (1 - self.vp))
-
-    def transform(self, u, v, beta):
-        u_ddt = u**beta
-        s = self.s_min + v * (self.s_max - self.s_min)
-        v_ddt = (np.exp(s) - self.d**2 * np.exp(-s)) / 2 + self.vp
-        j_ddt = (
-            beta
-            * u ** (2 * beta - 1)
-            * np.sqrt((v_ddt - self.vp) ** 2 + self.d**2)
-            * (self.s_max - self.s_min)
-        )
-        xi_ddt = u_ddt * (1 - v_ddt)
-        eta_ddt = u_ddt * v_ddt
-        return np.asarray([xi_ddt, eta_ddt, j_ddt])
-
-
-class DuffySinh:
-    def __init__(self, x_e):
-        r21 = x_e[0] - x_e[1]
-        r23 = x_e[2] - x_e[1]
-        self.vp = np.dot(r21, r23) / np.dot(r23, r23)
-        r2p = r23 * self.vp
-        # self.vp = np.linalg.norm(r2p) / np.linalg.norm(r23)
-        r1p = x_e[1] + r2p - x_e[0]
-        self.d = np.linalg.norm(r1p) / np.linalg.norm(r23)
-        self.s_min = np.arcsinh(-self.vp / self.d)
-        self.s_max = np.arcsinh((1 - self.vp) / self.d)
-
-    def transform(self, u, v, beta):
-        u_sinh = u**beta
-        s = self.s_min + v * (self.s_max - self.s_min)
-        v_sinh = self.vp + self.d * np.sinh(s)
-        j_sinh = self.d * np.cosh(s) * (self.s_max - self.s_min)
-        j_sinh = (
-            beta * u ** (2 * beta - 1) * self.d * np.cosh(s) * (self.s_max - self.s_min)
-        )
-
-        xi = u_sinh * (1 - v_sinh)
-        eta = u_sinh * v_sinh
-        return np.asarray([xi, eta, j_sinh])
