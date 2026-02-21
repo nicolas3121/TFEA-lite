@@ -37,18 +37,45 @@ def cal_KgMg(
         elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
         material = model.materials[mat_id - 1][1]
         real = model.reals[real_ie - 1][1]
-        # mask = BASE_DOFS
+        local_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
         if xfem:
-            h_enrich = np.any(elem_dofs & HEAVISIDE_DOFS)
-            t_enrich = np.any(elem_dofs & BRANCH_DOFS)
-            print(h_enrich, t_enrich)
-            # if h_enrich:
-            #     mask |= HEAVISIDE_DOFS
-            # if t_enrich:
-            #     mask |= BRANCH_DOFS
+            h_enrich = local_dofs_per_node & HEAVISIDE_DOFS != 0
+            t_enrich = local_dofs_per_node & BRANCH_DOFS != 0
+            # h_enrich = np.any(np.bitwise_and(HEAVISIDE_DOFS, elem_dofs))
+            # t_enrich = np.any(np.bitwise_and(BRANCH_DOFS, elem_dofs))
+
+            # print(h_enrich, t_enrich)
             if h_enrich or t_enrich:
                 # voor elke node van een doorsneden element level set en tip bijhouden
-                phi_n, phi_t = model.level_sets[0].get(elem_nodes, 1)
+                tip = 1
+                ls = model.ls[
+                    elem_nodes[
+                        np.argmax(
+                            np.bitwise_and(elem_dofs, BRANCH_DOFS | HEAVISIDE_DOFS) != 0
+                        )
+                    ]
+                    - 1
+                ]
+                if t_enrich:
+                    tip = model.tip[
+                        elem_nodes[
+                            np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0)
+                        ]
+                        - 1
+                    ]
+                    # print(
+                    #     "tip",
+                    #     tip,
+                    #     elem_dofs,
+                    #     np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0),
+                    #     elem_nodes[
+                    #         np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0)
+                    #     ],
+                    #     elem_nodes,
+                    # )
+                    # if tip == 1:
+                    #     print("tip is 1", ele_info[0])
+                phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
                 assert cut_info
                 ci = cut_info.get(ele_info[0])
                 partial_cut = False
@@ -73,16 +100,15 @@ def cal_KgMg(
             Me, Ke = elem.cal_element_matrices(eval_mass=True)
         else:
             Ke = elem.cal_element_matrices(eval_mass=False)
-        print(elem_nodes)
-        print("base", model.list_dof.get_elem_dof_numbers_flat(elem_nodes, BASE_DOFS))
-        print(
-            "heaviside",
-            model.list_dof.get_elem_dof_numbers_flat(elem_nodes, HEAVISIDE_DOFS),
-        )
-        print(
-            "branch",
-            model.list_dof.get_elem_dof_numbers_flat(elem_nodes, BRANCH_DOFS).flatten(),
-        )
+        # print("base", model.list_dof.get_elem_dof_numbers_flat(elem_nodes, BASE_DOFS))
+        # print(
+        #     "heaviside",
+        #     model.list_dof.get_elem_dof_numbers_flat(elem_nodes, HEAVISIDE_DOFS),
+        # )
+        # print(
+        #     "branch",
+        #     model.list_dof.get_elem_dof_numbers_flat(elem_nodes, BRANCH_DOFS).flatten(),
+        # )
         DOFs = np.concatenate(
             (
                 model.list_dof.get_elem_dof_numbers_flat(
@@ -96,15 +122,7 @@ def cal_KgMg(
                 ).flatten(),
             )
         )
-        # print(len(DOFs), Ke.shape[0])
-        # print(elem_dofs)
-        # print(Ke)
-        np.set_printoptions(linewidth=1000, threshold=np.inf, suppress=True)
-        print(Ke)
-        assert np.all(np.isclose(Ke, Ke.T))
-
         if len(DOFs) < Ke.shape[0]:
-            local_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
             is_present = np.bitwise_count(
                 np.bitwise_and(DOF_TYPES[:, None], elem_dofs)
             ).flatten()
@@ -125,31 +143,19 @@ def cal_KgMg(
                 for i in range(3 * n_nodes)
                 if is_present[i] != 0
             ]
-            print(ranges)
-            # range_ii = itertools.chain.from_iterable(ranges)
-            # range_jj = itertools.chain.from_iterable(ranges)
+            ranges = list(itertools.chain.from_iterable(ranges))
         else:
-            ranges = [range(Ke.shape[0])]
-            # range_ii = range(Ke.shape[0])
-            # range_jj = range(Ke.shape[0])
-        for ii, gii in enumerate(itertools.chain.from_iterable(ranges)):
-            for jj, gjj in enumerate(itertools.chain.from_iterable(ranges)):
-                print("ii, gii", ii, gii, "jj, gjj", jj, gjj)
+            ranges = range(Ke.shape[0])
+        for ii, gii in enumerate(ranges):
+            for jj, gjj in enumerate(ranges):
                 Kg[DOFs[ii], DOFs[jj]] += Ke[gii, gjj]
                 if eval_mass:
                     Mg[DOFs[ii], DOFs[jj]] += Me[gii, gjj]
-        # print("nodes", elem_vertices)
-        # print("DOFs", DOFs)
-        # print(model.list_dof.list_dof_number)
-        # print(model.list_dof.list_dof)
         if (i_e + 1) % 1000 == 0:
             print(
                 f"   - e {i_e + 1} ({ele_info[1]}) of {len(model.elements)} evaluated"
             )
     print(".. Stiffness & mass matrix completed!")
-
-    Kg__ = Kg.todense()
-    assert np.all(np.isclose(Kg__, Kg__.T))
 
     Kg = 0.5 * (Kg + Kg.transpose())
     if eval_mass:

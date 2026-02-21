@@ -57,7 +57,7 @@ class DuffySinh:
         u_sinh = u**beta
         s = self.s_min + v * (self.s_max - self.s_min)
         v_sinh = self.vp + self.d * np.sinh(s)
-        j_sinh = self.d * np.cosh(s) * (self.s_max - self.s_min)
+        # j_sinh = self.d * np.cosh(s) * (self.s_max - self.s_min)
         j_sinh = (
             beta * u ** (2 * beta - 1) * self.d * np.cosh(s) * (self.s_max - self.s_min)
         )
