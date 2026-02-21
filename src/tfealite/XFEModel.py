@@ -1,4 +1,5 @@
 from numpy.typing import NDArray
+import numpy as np
 from .FEModel import FEModel
 from .core.level_set import LevelSet, CutType
 from .core import model
@@ -21,7 +22,9 @@ class XFEModel(FEModel):
         self.level_sets = []
         self.cut_info = {}
         self.tip_enrichment = tip_enrichment
-        self.geometrical_range = 0
+        self.geometrical_range = 0.5
+        self.ls = np.zeros(self.n_nodes, dtype=np.int32)
+        self.tip = np.zeros(self.n_nodes, dtype=np.int32)
 
     def gen_list_dof(self, dof_per_node):
         self.dof_per_node = dof_per_node
@@ -30,7 +33,7 @@ class XFEModel(FEModel):
         assert self.level_sets
         for elem in self.elements:
             id = elem[0]
-            nodes = elem[4]
+            nodes = np.asarray(elem[4])
             for i, ls in enumerate(self.level_sets):
                 cut_type, tip = ls.is_cut(elem)
                 if cut_type != CutType.NONE:
@@ -38,26 +41,43 @@ class XFEModel(FEModel):
                         print("warning: element already cut by other level set")
                     if cut_type == CutType.PARTIAL:
                         if self.tip_enrichment:
+                            self.ls[nodes - 1] = i
+                            self.tip[nodes - 1] = tip
                             self.cut_info[id] = (i, cut_type, tip)
                             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
                     else:
-                        self.list_dof.add_dofs(nodes, dofs.IS_2D_HEAVISIDE)
+                        phi_n, _ = ls.get(nodes, None)
+                        touching = np.argwhere(np.isclose(phi_n, 0))
+                        if len(touching):
+                            print("touching")
+                            filtered = nodes[touching]
+                        else:
+                            filtered = nodes
+
+                        self.list_dof.add_dofs(filtered, dofs.IS_2D_HEAVISIDE)
                         if self.tip_enrichment:
                             in_range, tip = ls.in_range(elem, self.geometrical_range)
                             if in_range:
+                                self.tip[nodes - 1] = tip
                                 self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                        self.ls[nodes - 1] = i
                         self.cut_info[id] = (i, cut_type, tip)
                 else:
                     if self.tip_enrichment:
                         in_range, tip = ls.in_range(elem, self.geometrical_range)
                         if in_range:
+                            self.tip[nodes - 1] = tip
+                            self.ls[nodes - 1] = i
                             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
                             self.cut_info[id] = (i, CutType.NONE, tip)
         for elem_id, ci in self.cut_info.items():
-            _, cut_type, _ = ci
+            i, cut_type, tip = ci
             print(cut_type)
             if cut_type == CutType.PARTIAL:
                 nodes = self.elements[elem_id - 1][4]
+                nodes = np.asarray(nodes)
+                self.tip[nodes - 1] = tip
+                self.ls[nodes - 1] = i
                 self.list_dof.remove_dofs(nodes, dofs.IS_2D_HEAVISIDE)
 
         self.list_dof.update()
