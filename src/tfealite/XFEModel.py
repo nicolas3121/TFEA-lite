@@ -15,6 +15,7 @@ class XFEModel(FEModel):
         materials,
         reals,
         tip_enrichment=False,
+        geometrical_range=0.0,
     ):
         FEModel.__init__(self, nodes, elements, materials, reals)
         self.base_list_dof = None
@@ -22,7 +23,7 @@ class XFEModel(FEModel):
         self.level_sets = []
         self.cut_info = {}
         self.tip_enrichment = tip_enrichment
-        self.geometrical_range = 0.5
+        self.geometrical_range = geometrical_range
         self.ls = np.zeros(self.n_nodes, dtype=np.int32)
         self.tip = np.zeros(self.n_nodes, dtype=np.int32)
 

@@ -69,95 +69,42 @@ class LevelSet:
             sign_t2 = (1 - np.isclose(phi_t2, 0)) * np.sign(phi_t2)
             if np.sum(sign_t2) == n_nodes:
                 return CutType.NONE, None
-        num = phi_n[1:]
-        denom = phi_n[1:] - phi_n[:-1]
+        num = np.empty_like(phi_n)
+        num[:-1] = phi_n[1:]
+        num[-1] = phi_n[0]
+        denom = num - phi_n
         unsolvable = denom == 0
         denom += unsolvable
         N1 = num / denom
         in_element = (N1 >= 0) & (N1 <= 1)
         if not np.any(~unsolvable & in_element):
             return CutType.NONE, None
-        d_t = N1 * phi_t[:-1] + (1 - N1) * phi_t[1:]
-        tip = np.linalg.solve(np.array([phi_t, phi_n, [1, 1, 1]]), np.array([0, 0, 1]))
+        d_t = np.empty_like(phi_n)
+        d_t[:-1] = N1[:-1] * phi_t[:-1] + (1 - N1[:-1]) * phi_t[1:]
+        d_t[-1] = N1[-1] * phi_t[-1] + (1 - N1[-1]) * phi_t[0]
         d_t2 = None
-        tip2 = None
+        x2 = None
         if phi_t2 is not None:
-            d_t2 = N1 * phi_t2[:-1] + (1 - N1) * phi_t2[1:]
-            tip2 = np.linalg.solve(
-                np.array([phi_t2, phi_n, [1, 1, 1]]), np.array([0, 0, 1])
+            d_t2 = np.empty_like(phi_n)
+            d_t2[:-1] = N1[:-1] * phi_t2[:-1] + (1 - N1[:-1]) * phi_t2[1:]
+            d_t2[-1] = N1[-1] * phi_t2[-1] + (1 - N1[-1]) * phi_t2[0]
+            x2 = np.sum(
+                (1 - np.isclose(d_t2, 0.0)) * np.sign(d_t2) * (~unsolvable & in_element)
             )
+        x = np.sum(
+            (1 - np.isclose(d_t, 0.0)) * np.sign(d_t) * (~unsolvable & in_element)
+        )
 
-        # print("unsolvable", unsolvable)
-        # print("inside_element", in_element)
-        # print(d_t)
-        # print(d_t2)
-        if np.all(tip >= 0):
+        if x == 2:
+            return CutType.NONE, None
+        elif x2 is not None:
+            if x2 == 2:
+                return CutType.NONE, None
+            elif x2 >= -1:
+                return CutType.PARTIAL, 2
+        elif x >= -1:
             return CutType.PARTIAL, 1
-        elif tip2 is not None and np.all(tip2 >= 0):
-            return CutType.PARTIAL, 2
-        elif np.all(
-            ((1 - np.isclose(d_t, 0.0)) * np.sign(d_t) == 1) | unsolvable | ~in_element
-        ):
-            return CutType.NONE, None
-        elif d_t2 is not None and np.all(
-            ((1 - np.isclose(d_t2, 0.0)) * np.sign(d_t2) == 1)
-            | unsolvable
-            | ~in_element
-        ):
-            # print("here 2")
-            return CutType.NONE, None
         return CutType.CUT, None
-
-        # elem = Tri3n
-        # xi = 0
-        # eta = 0
-        # N, dN_dxi = elem.shape_functions(xi, eta)
-        # d_n = np.dot(phi_n, N)
-        # dphi_n_dxi1 = np.sum(phi_n * dN_dxi, axis=1)
-        # dphi_n_dxi2 = dphi_n_dxi1
-        # n = 0
-        # # if __debug__:
-        # #     print("xi", xi, "eta", eta, "d", d_n)
-        # #     print("phi_n", phi_n)
-        # while not np.isclose(d_n, 0.0):
-        #     # avoid divide by 0
-        #     xi = np.clip(xi - d_n / (dphi_n_dxi1[0] + 10 ** (-10)), 0.0, 1.0)
-        #     eta = np.clip(eta - d_n / (dphi_n_dxi2[1] + 10 ** (-10)), 0.0, 1.0)
-        #     N1, dN_dxi1 = elem.shape_functions(xi, 0)
-        #     N2, dN_dxi2 = elem.shape_functions(0, eta)
-        #     last = d_n
-        #     d_n1 = np.dot(phi_n, N1)
-        #     d_n2 = np.dot(phi_n, N2)
-        #     dphi_n_dxi1 = np.sum(phi_n * dN_dxi1, axis=1)
-        #     dphi_n_dxi2 = np.sum(phi_n * dN_dxi2, axis=1)
-        #     if abs(d_n1) < abs(d_n2):
-        #         N = N1
-        #         d_n = d_n1
-        #     else:
-        #         N = N2
-        #         d_n = d_n2
-        #     n += 1
-        #     if n > 1000 or np.isclose((d_n - last) / (d_n + 10e-10), 0):
-        #         print("end")
-        #         return CutType.NONE, None
-        # d_t = np.dot(N, phi_t)
-        # tip = np.linalg.solve(np.array([phi_t, phi_n, [1, 1, 1]]), np.array([0, 0, 1]))
-        # d_t2 = None
-        # tip2 = None
-        # if phi_t2 is not None:
-        #     d_t2 = np.dot(N, phi_t2)
-        #     tip2 = np.linalg.solve(
-        #         np.array([phi_t2, phi_n, [1, 1, 1]]), np.array([0, 0, 1])
-        #     )
-        # if np.all(tip >= 0):
-        #     return CutType.PARTIAL, 1
-        # elif tip2 is not None and np.all(tip2 >= 0):
-        #     return CutType.PARTIAL, 2
-        # elif (1 - np.isclose(d_t, 0.0)) * np.sign(d_t) == 1:
-        #     return CutType.NONE, None
-        # elif d_t2 and (1 - np.isclose(d_t2, 0.0)) * np.sign(d_t2) == 1:
-        #     return CutType.NONE, None
-        # return CutType.CUT, None
 
     def in_range(self, element, radius) -> Tuple[bool, None | int]:
         assert self.phi_n is not None
