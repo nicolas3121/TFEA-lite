@@ -97,12 +97,12 @@ class LevelSet:
 
         if x == 2:
             return CutType.NONE, None
-        elif x2 is not None:
+        if x2 is not None:
             if x2 == 2:
                 return CutType.NONE, None
             elif x2 >= -1:
                 return CutType.PARTIAL, 2
-        elif x >= -1:
+        if x >= -1:
             return CutType.PARTIAL, 1
         return CutType.CUT, None
 
