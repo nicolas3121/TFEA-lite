@@ -15,6 +15,7 @@ N_DOFS: Final = DOFS * N_FN
 H_DOFS: Final = DOFS * H_FN
 TIP_DOFS: Final = DOFS * TIP_FN
 
+CONTINUOUS_BRANCH_MASK = np.array([1, 0, 1, 1])
 
 NAT_1: Final = np.array([[-1, -1], [1, -1], [1, 1]])
 NAT_2: Final = np.array([[-1, -1], [1, 1], [-1, 1]])
@@ -479,8 +480,6 @@ class XQuad4n(Quad4n):
                 ).T
             )
             if self.h_enrich:
-                # print(bf_i.T)
-                print((1 - self.h_enrich_per_node)[:, None])
                 bf_shifted = (
                     bf
                     - (1 - self.h_enrich_per_node[:, None]) * bf_i.T
@@ -489,8 +488,6 @@ class XQuad4n(Quad4n):
                     * np.sign(self.phi_n).reshape((-1, 1))
                     * bf_i.T
                 )
-                print("bf_shifted")
-                print(bf_shifted)
             else:
                 bf_shifted = bf - bf_i.T
             begin_tip = N_FN + int(self.h_enrich) * H_FN
@@ -517,10 +514,8 @@ class XQuad4n(Quad4n):
         (N[:, :N_FN], dN_dxi[:, :, :N_FN]) = super().shape_functions2(xi, eta)
         phi_n = np.sum(self.phi_n * N[:, :N_FN], axis=1)
         phi_t = np.sum(self.phi_t * N[:, :N_FN], axis=1)
-        # print(phi_n)
         if self.h_enrich:
             h_shifted = (np.sign(phi_n)[:, None] - np.sign(self.phi_n)) / 2
-            # print(h_shifted)
             begin_h, end_h = N_FN, N_FN + H_FN
             N[:, begin_h:end_h] = h_shifted * N[:, :N_FN]
             dN_dxi[:, :, begin_h:end_h] = h_shifted[:, None, :] * dN_dxi[:, :, :N_FN]
@@ -544,9 +539,6 @@ class XQuad4n(Quad4n):
             )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
             bf = branch_functions(sqrt_r, theta).T
             bf_i = branch_functions(sqrt_r_i, theta_i).T
-            # print(sqrt_r)
-            # print(dr_dxi.reshape((-1, 2, 1)))
-            # print((bf / sqrt_r[:, None]))
 
             dbf_dxi = 1 / (2 * sqrt_r[:, None, None]) * dr_dxi.reshape((-1, 2, 1)) * (
                 bf / sqrt_r[:, None]
@@ -564,36 +556,41 @@ class XQuad4n(Quad4n):
                 ]
             ).transpose(1, 2, 0)
             if self.h_enrich:
-                print(bf_i)
-                print(self.h_enrich_per_node[None, :, None])
-                bf_shifted = (
-                    bf[:, None, :]
-                    - (1 - self.h_enrich_per_node)[None, :, None] * bf_i[None, :, :]
-                    - self.h_enrich_per_node[None, :, None]
+                # only discontinuous branch function is sin(theta / 2)
+                is_continuous_shift = (1 - self.h_enrich_per_node)[
+                    :, None
+                ] + self.h_enrich_per_node[None, :] * CONTINUOUS_BRANCH_MASK[:, None]
+                shifter = (
+                    is_continuous_shift[None, :, :]
+                    + (1 - is_continuous_shift[None, :, :])
                     * np.sign(phi_n[:, None, None])
                     * np.sign(self.phi_n[None, :, None])
-                    * bf_i[None, :, :]
-                )
-                print("bf_shifted")
-                print(bf_shifted)
+                ) * bf_i[None, :, :]
             else:
-                bf_shifted = bf[:, None, :] - bf_i[None, :, :]
+                shifter = bf_i[None, :, :]
+            interpolant = np.sum(shifter * N[:, :N_FN, None], axis=1)
             begin_tip = N_FN + int(self.h_enrich) * H_FN
             end_tip = begin_tip + TIP_FN
+            bf_shifted = bf - interpolant
 
-            N[:, begin_tip:end_tip] = (bf_shifted * N[:, :N_FN, None]).reshape(
-                -1, TIP_FN
-            )
-            term1 = dbf_dxi[:, None, :, :] * N[:, :N_FN, None, None]  # (n, 4, 2, 4)
+            N[:, begin_tip:end_tip] = (
+                bf_shifted[:, None, :] * N[:, :N_FN, None]
+            ).reshape(-1, TIP_FN)
+
+            term1 = (
+                dbf_dxi
+                - np.sum(shifter[:, None, :, :] * dN_dxi[:, :, :N_FN, None], axis=2)
+            )[:, None, :, :] * N[:, :N_FN, None, None]  # (n, 4, 2, 4)
+
             term2 = (
-                bf_shifted[:, :, :, None]
-                * dN_dxi[:, :, :N_FN].transpose(0, 2, 1)[:, :, None, :]
+                bf_shifted[:, None, None, :]  # (n, 1, 1, 4)
+                * dN_dxi[:, :, :N_FN, None]  # (n, 2, 4, 1)
             )  # (n, 4, 4, 2)
             dN_dxi[:, 0, begin_tip:end_tip] = (
-                term1[:, :, 0, :] + term2[:, :, :, 0]
+                term1[:, :, 0, :] + term2[:, 0, :, :]
             ).reshape(-1, TIP_FN)
             dN_dxi[:, 1, begin_tip:end_tip] = (
-                term1[:, :, 1, :] + term2[:, :, :, 1]
+                term1[:, :, 1, :] + term2[:, 1, :, :]
             ).reshape(-1, TIP_FN)
         return N, dN_dxi
 
