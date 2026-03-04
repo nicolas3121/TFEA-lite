@@ -68,6 +68,27 @@ class Quad4n:
         )
         return N, dN_dxi
 
+    def shape_functions2(self, xi, eta):
+        xi_min = 1 - xi
+        xi_plus = 1 + xi
+        eta_min = 1 - eta
+        eta_plus = 1 + eta
+        N = (
+            0.25
+            * np.array(
+                [
+                    xi_min * eta_min,
+                    xi_plus * eta_min,
+                    xi_plus * eta_plus,
+                    xi_min * eta_plus,
+                ]
+            ).T
+        )
+        row1 = [-eta_min, eta_min, eta_plus, -eta_plus]
+        row2 = [-xi_min, -xi_plus, xi_plus, xi_min]
+        dN_dxi = 0.25 * np.stack([row1, row2]).transpose(2, 0, 1)
+        return N, dN_dxi
+
     def stresses_at_nodes(self, Ue):
         Ue = np.asarray(Ue, dtype=float).ravel()
         nat_coords = [

@@ -21,3 +21,13 @@ def cal_B_2d(dN_dxy):
     B[2, ::DOFS] = dN_dxy[1, :]
     B[2, 1::DOFS] = dN_dxy[0, :]
     return B
+
+
+def cal_B_2d_vec(dN_dxy):
+    DOFS: Final = 2
+    B = np.zeros((dN_dxy.shape[0], 3, DOFS * dN_dxy.shape[2]))
+    B[:, 0, ::DOFS] = dN_dxy[:, 0, :]
+    B[:, 1, 1::DOFS] = dN_dxy[:, 1, :]
+    B[:, 2, ::DOFS] = dN_dxy[:, 1, :]
+    B[:, 2, 1::DOFS] = dN_dxy[:, 0, :]
+    return B
