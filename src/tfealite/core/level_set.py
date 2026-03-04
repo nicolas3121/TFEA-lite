@@ -40,14 +40,14 @@ class LevelSet:
         assert self.phi_t is not None
         nodes = np.asarray(nodes) - 1
         phi_n = self.phi_n[nodes]
-        if tip is None or tip == 1:
+        if tip is None or tip == 1 or tip == 0:
             phi_t = self.phi_t[nodes]
         else:
             assert self.phi_t2 is not None
             phi_t = self.phi_t2[nodes]
         return phi_n, phi_t
 
-    def is_cut(self, element) -> Tuple[CutType, None | int]:
+    def is_cut(self, element) -> Tuple[CutType, None | int, bool]:
         assert self.phi_n is not None
         assert self.phi_t is not None
         nodes = np.asarray(element[4]) - 1
@@ -60,15 +60,15 @@ class LevelSet:
         m1 = sign_n[0] * sign_n[-1]
         m2 = sign_n[:-1] * sign_n[1:]
         if m1 > 0 and np.all(m2 > 0):
-            return CutType.NONE, None
+            return CutType.NONE, None, False
         sign_t = (1 - np.isclose(phi_t, 0)) * np.sign(phi_t)
         if np.sum(sign_t) == n_nodes:
-            return CutType.NONE, None
+            return CutType.NONE, None, False
         if self.phi_t2 is not None:
             phi_t2 = self.phi_t2[nodes]
             sign_t2 = (1 - np.isclose(phi_t2, 0)) * np.sign(phi_t2)
             if np.sum(sign_t2) == n_nodes:
-                return CutType.NONE, None
+                return CutType.NONE, None, False
         num = np.empty_like(phi_n)
         num[:-1] = phi_n[1:]
         num[-1] = phi_n[0]
@@ -77,8 +77,22 @@ class LevelSet:
         denom += unsolvable
         N1 = num / denom
         in_element = (N1 >= 0) & (N1 <= 1)
-        if not np.any(~unsolvable & in_element):
-            return CutType.NONE, None
+        actual_cuts = ~unsolvable & in_element
+        n_actual_cuts = np.sum(actual_cuts)
+        touching = not (
+            np.any(actual_cuts & ~np.isclose(N1, 0) & ~np.isclose(N1, 1))
+            or n_actual_cuts == actual_cuts.shape[0]
+        )
+        # print("N1", N1)
+        # print("in_element", in_element)
+        # print("unsolvable", unsolvable)
+        # print("actual cuts", actual_cuts)
+        # print(
+        #     np.any(actual_cuts & ~np.isclose(N1, 0) & ~np.isclose(N1, 1))
+        #     or n_actual_cuts == actual_cuts.shape[0]
+        # )
+        if n_actual_cuts == 0:
+            return CutType.NONE, None, False
         d_t = np.empty_like(phi_n)
         d_t[:-1] = N1[:-1] * phi_t[:-1] + (1 - N1[:-1]) * phi_t[1:]
         d_t[-1] = N1[-1] * phi_t[-1] + (1 - N1[-1]) * phi_t[0]
@@ -88,23 +102,20 @@ class LevelSet:
             d_t2 = np.empty_like(phi_n)
             d_t2[:-1] = N1[:-1] * phi_t2[:-1] + (1 - N1[:-1]) * phi_t2[1:]
             d_t2[-1] = N1[-1] * phi_t2[-1] + (1 - N1[-1]) * phi_t2[0]
-            x2 = np.sum(
-                (1 - np.isclose(d_t2, 0.0)) * np.sign(d_t2) * (~unsolvable & in_element)
-            )
-        x = np.sum(
-            (1 - np.isclose(d_t, 0.0)) * np.sign(d_t) * (~unsolvable & in_element)
-        )
+            x2 = np.sum((1 - np.isclose(d_t2, 0.0)) * np.sign(d_t2) * actual_cuts)
+        x = np.sum((1 - np.isclose(d_t, 0.0)) * np.sign(d_t) * actual_cuts)
+        # print("d_t", d_t)
 
         if x == 2:
-            return CutType.NONE, None
+            return CutType.NONE, None, False
         if x2 is not None:
             if x2 == 2:
-                return CutType.NONE, None
-            elif x2 >= -1:
-                return CutType.PARTIAL, 2
-        if x >= -1:
-            return CutType.PARTIAL, 1
-        return CutType.CUT, None
+                return CutType.NONE, None, False
+            elif x2 >= -1 and n_actual_cuts > 1:
+                return CutType.PARTIAL, 2, touching
+        if x >= -1 and n_actual_cuts > 1:
+            return CutType.PARTIAL, 1, touching
+        return CutType.CUT, None, touching
 
     def in_range(self, element, radius) -> Tuple[bool, None | int]:
         assert self.phi_n is not None

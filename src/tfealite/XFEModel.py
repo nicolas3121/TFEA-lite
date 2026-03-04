@@ -32,26 +32,29 @@ class XFEModel(FEModel):
         model.gen_list_dof(self, dof_per_node)
         assert self.list_dof is not None
         assert self.level_sets
+        partial_cuts = []
         for elem in self.elements:
             id = elem[0]
             nodes = np.asarray(elem[4])
             for i, ls in enumerate(self.level_sets):
-                cut_type, tip = ls.is_cut(elem)
+                cut_type, tip, touching = ls.is_cut(elem)
                 if cut_type != CutType.NONE:
                     if id in self.cut_info:
                         print("warning: element already cut by other level set")
                     if cut_type == CutType.PARTIAL:
+                        partial_cuts.append((id, (i, cut_type, tip)))
                         if self.tip_enrichment:
                             self.ls[nodes - 1] = i
                             self.tip[nodes - 1] = tip
                             self.cut_info[id] = (i, cut_type, tip)
                             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
                     else:
-                        phi_n, _ = ls.get(nodes, None)
-                        touching = np.argwhere(np.isclose(phi_n, 0))
-                        if len(touching):
+                        # TODO: pas echt aan het touchen als alle intersecties 0 of 1 zijn
+                        # touching = np.argwhere(np.isclose(phi_n, 0))
+                        if touching:
                             print("touching")
-                            filtered = nodes[touching]
+                            phi_n, _ = ls.get(nodes, None)
+                            filtered = nodes[np.argwhere(np.isclose(phi_n, 0))]
                         else:
                             filtered = nodes
 
@@ -71,7 +74,8 @@ class XFEModel(FEModel):
                             self.ls[nodes - 1] = i
                             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
                             self.cut_info[id] = (i, CutType.NONE, tip)
-        for elem_id, ci in self.cut_info.items():
+            # for elem_id, ci in self.cut_info.items():
+        for elem_id, ci in partial_cuts:
             i, cut_type, tip = ci
             print(cut_type)
             if cut_type == CutType.PARTIAL:
@@ -83,25 +87,6 @@ class XFEModel(FEModel):
 
         self.list_dof.update()
 
-    # def gen_list_dof(self, dof_per_node):
-    #     self.dof_per_node = dof_per_node
-    #     model.gen_list_dof(self, dof_per_node)
-    #     cut_elem = self.level_set[2]
-    #     partial_cut_elem = self.level_set[3]
-    #     assert self.list_dof is not None
-    #     for id in cut_elem:
-    #         element = self.elements[id - 1]
-    #         assert id == element[0]
-    #         nodes = element[4]
-    #         self.list_dof.add_dofs(nodes, dofs.IS_2D_HEAVISIDE)
-    #     if self.tip_enrichment:
-    #         for id in partial_cut_elem:
-    #             element = self.elements[id - 1]
-    #             assert id == element[0]
-    #             nodes = element[4]
-    #             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
-    #     self.list_dof.update()
-
     def cal_global_matrices(self, elem, eval_mass=False, skip_elements={}):
         asm.cal_KgMg(
             self,
@@ -111,11 +96,6 @@ class XFEModel(FEModel):
             tip_enrich=self.tip_enrichment,
             skip_elements=skip_elements,
         )
-
-    # def insert_crack_segment(self, p1: NDArray, p2: NDArray):
-    #     self.level_set = level_set.gen_from_line_segment(
-    #         self.nodes, self.elements, p1, p2
-    #     )
 
     def insert_crack_segment(self, p1: NDArray, p2: NDArray, embedded):
         ls = LevelSet()
