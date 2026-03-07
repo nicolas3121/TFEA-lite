@@ -172,3 +172,26 @@ def test_array_stiffness_mat():
     print(end - start)
     # print(diff[:, 8:])
     assert np.all(np.isclose(old_heaviside, new_heaviside, atol=10e-18))
+
+
+def test_shape_tip_enrichment():
+    nodes = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
+    material = {"E": 1, "nu": 0.3, "rho": 1}
+    real = {"t": 1}
+    quad = XQuad4n(
+        nodes,
+        material,
+        real,
+        np.array([-1, -1, 1, 1]),
+        np.array([-2, -1, -1, -2]),
+        True,
+        True,
+        False,
+        h_enrich_per_node=np.array([0, 0, 0, 0]),
+    )
+    xi = np.zeros(99) - 1
+    eta = np.linspace(-1, 1, 99)
+
+    N, dN_dxi = quad.shape_functions2(xi, eta)
+    N.tofile("enrichment_data")
+    assert False

@@ -15,7 +15,7 @@ N_DOFS: Final = DOFS * N_FN
 H_DOFS: Final = DOFS * H_FN
 TIP_DOFS: Final = DOFS * TIP_FN
 
-CONTINUOUS_BRANCH_MASK = np.array([1, 0, 1, 1])
+CONTINUOUS_BRANCH_MASK = np.array([1, 1, 1, 1])
 
 NAT_1: Final = np.array([[-1, -1], [1, -1], [1, 1]])
 NAT_2: Final = np.array([[-1, -1], [1, 1], [-1, 1]])
@@ -557,9 +557,12 @@ class XQuad4n(Quad4n):
             ).transpose(1, 2, 0)
             if self.h_enrich:
                 # only discontinuous branch function is sin(theta / 2)
+                print(self.h_enrich_per_node)
+                print(self.node_coords)
                 is_continuous_shift = (1 - self.h_enrich_per_node)[
                     :, None
-                ] + self.h_enrich_per_node[None, :] * CONTINUOUS_BRANCH_MASK[:, None]
+                ] + self.h_enrich_per_node[:, None] * CONTINUOUS_BRANCH_MASK[None, :]
+                print(is_continuous_shift)
                 shifter = (
                     is_continuous_shift[None, :, :]
                     + (1 - is_continuous_shift[None, :, :])
@@ -578,14 +581,17 @@ class XQuad4n(Quad4n):
             ).reshape(-1, TIP_FN)
 
             term1 = (
-                dbf_dxi
-                - np.sum(shifter[:, None, :, :] * dN_dxi[:, :, :N_FN, None], axis=2)
-            )[:, None, :, :] * N[:, :N_FN, None, None]  # (n, 4, 2, 4)
+                (
+                    dbf_dxi
+                    - np.sum(shifter[:, None, :, :] * dN_dxi[:, :, :N_FN, None], axis=2)
+                )[:, None, :, :]  # (n, 1, 2, 4)
+                * N[:, :N_FN, None, None]  # (n, 4, 1, 1)
+            )  # (n, 4, 2, 4)
 
             term2 = (
                 bf_shifted[:, None, None, :]  # (n, 1, 1, 4)
                 * dN_dxi[:, :, :N_FN, None]  # (n, 2, 4, 1)
-            )  # (n, 4, 4, 2)
+            )  # (n, 2, 4, 4)
             dN_dxi[:, 0, begin_tip:end_tip] = (
                 term1[:, :, 0, :] + term2[:, 0, :, :]
             ).reshape(-1, TIP_FN)

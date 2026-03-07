@@ -1,11 +1,190 @@
 import numpy as np
 import pyvista as pv
-from ..core.dofs import DofType
+from ..core.dofs import DofType, BASE_DOFS, HEAVISIDE_DOFS, BRANCH_DOFS
+from ..elements.XQuad4n import XQuad4n
+from ..core.level_set import CutType
+import itertools
+
+DOF_TYPES = np.array(
+    [
+        BASE_DOFS,
+        HEAVISIDE_DOFS,
+        BRANCH_DOFS,
+    ]
+)
 
 
 def _id_to_index(nodes):
     nodes = np.asarray(nodes)
     return {int(nid): i for i, nid in enumerate(nodes[:, 0].astype(int))}
+
+
+def build_XQuad4n(model, node_stress=None):
+    cut_info = model.cut_info
+    n_nodes = 4
+    points_ref = []
+    displacements = []
+
+    faces = []
+
+    # kan mogelijk extra set barycentrische coordinates gebruiken voor binnen mijn nieuwe driehoek
+    # teken bekijken volgende, vorige n
+    def build_triangles(iter, Ue, nat_x_e, elem_vertices):
+        for Ni, _ in iter:
+            centroid = np.mean(Ni, axis=1)
+            Ni = centroid[:, None] + (Ni - centroid[:, None]) * 0.99999
+            sub_nat_x_e = Ni.T @ nat_x_e
+            sub_shape_functions = np.array(
+                [elem.shape_functions(xi[0], xi[1])[0] for xi in sub_nat_x_e]
+            )
+            sub_vertices = sub_shape_functions[:, :4] @ elem_vertices
+
+            displacements.append(sub_shape_functions @ Ue)
+            n_points = 3 * len(points_ref)
+            faces.extend([3, n_points, n_points + 1, n_points + 2])
+            points_ref.append(sub_vertices)
+
+    for elem_id, (_, cut_type, _) in cut_info.items():
+        element = model.elements[elem_id - 1]
+        _, _, mat_id, real_id, elem_nodes = element
+        elem_nodes = np.asarray(elem_nodes)
+        elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
+        local_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
+        h_enrich = local_dofs_per_node & HEAVISIDE_DOFS != 0
+        t_enrich = local_dofs_per_node & BRANCH_DOFS != 0
+        if cut_type == CutType.NONE:
+            continue
+        partial_cut = cut_type == CutType.PARTIAL
+        most_enriched_node = elem_nodes[
+            np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS | HEAVISIDE_DOFS) != 0)
+        ]
+        ls = model.ls[most_enriched_node - 1]
+        tip = model.tip[most_enriched_node - 1]
+        # print("ls", ls, "tip", tip)
+        Ue = np.zeros((4, np.bitwise_count(local_dofs_per_node))).flatten()
+        DOFs = np.concatenate(
+            (
+                model.list_dof.get_elem_dof_numbers_flat(
+                    elem_nodes, BASE_DOFS
+                ).flatten(),
+                model.list_dof.get_elem_dof_numbers_flat(
+                    elem_nodes, HEAVISIDE_DOFS
+                ).flatten(),
+                model.list_dof.get_elem_dof_numbers_flat(
+                    elem_nodes, BRANCH_DOFS
+                ).flatten(),
+            )
+        )
+        Ueg = model.Ug[DOFs]
+        if len(DOFs) < len(Ue):
+            is_present = np.bitwise_count(
+                np.bitwise_and(DOF_TYPES[:, None], elem_dofs)
+            ).flatten()
+            is_present_offsets = np.cumsum(is_present)
+            absent_offsets = np.cumsum(
+                np.bitwise_count(
+                    np.bitwise_and(
+                        local_dofs_per_node,
+                        np.bitwise_and(DOF_TYPES[:, None], np.bitwise_not(elem_dofs)),
+                    )
+                )
+            )
+            ranges = [
+                range(
+                    is_present_offsets[i] - is_present[i] + absent_offsets[i],
+                    is_present_offsets[i] + absent_offsets[i],
+                )
+                for i in range(3 * n_nodes)
+                if is_present[i] != 0
+            ]
+            Ue[list(itertools.chain.from_iterable(ranges))] = Ueg
+            # print("here")
+        else:
+            Ue[:] = Ueg
+        elem_vertices = model.nodes[elem_nodes - 1, 1:3]
+        material = model.materials[mat_id - 1][1]
+        real = model.reals[real_id - 1][1]
+        phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
+
+        elem = XQuad4n(
+            elem_vertices,
+            material,
+            real,
+            phi_n,
+            phi_t,
+            h_enrich,
+            t_enrich,
+            partial_cut,
+        )
+        Ue = Ue.reshape((-1, 2))
+
+        Nc1, Nc2 = elem._cal_intersections()
+        if partial_cut:
+            tip1 = np.linalg.solve(
+                np.array([phi_t[:-1], phi_n[:-1], [1, 1, 1]]),
+                np.array([0, 0, 1]),
+            )
+            tip2 = np.linalg.solve(
+                np.array([phi_t[[0, 2, 3]], phi_n[[0, 2, 3]], [1, 1, 1]]),
+                np.array([0, 0, 1]),
+            )
+            iter1 = elem._partial_cut_embedding_iter(Nc1, tip1, range(4))
+            iter2 = elem._partial_cut_embedding_iter(Nc2, tip2, range(2, 6))
+        else:
+            iter1 = elem._cut_embedding_iter(Nc1)
+            iter2 = elem._cut_embedding_iter(Nc2)
+        build_triangles(iter1, Ue, np.array([[-1, -1], [1, -1], [1, 1]]), elem_vertices)
+        build_triangles(iter2, Ue, np.array([[-1, -1], [1, 1], [-1, 1]]), elem_vertices)
+
+    points_ref = np.array(points_ref).reshape((-1, 2))
+    displacements = np.array(displacements).reshape((-1, 2))
+    points_ref = np.hstack((points_ref, np.zeros((points_ref.shape[0], 1))))
+    displacements = np.hstack((displacements, np.zeros((displacements.shape[0], 1))))
+    points = points_ref + displacements
+    mesh = pv.PolyData(points, faces)
+    mesh.point_data["points_ref"] = points_ref
+    mesh.point_data["displacement"] = displacements
+    return mesh
+
+
+def my_build_Quad4n(model, node_stress=None):
+    nodes = np.asarray(model.nodes)
+    points_ref = nodes[:, 1:4]
+    faces = []
+    cell_eids = []
+    cell_dofs_per_node = []
+    is_cut = []
+    displacements = np.zeros_like(points_ref)
+    displacements[:, :2] = model.Ug[
+        model.list_dof.get_elem_dof_numbers_flat(
+            1 + np.arange(nodes.shape[0]), BASE_DOFS
+        )
+    ].reshape((-1, 2))
+    for element in model.elements:
+        eid, _, mat_id, real_id, elem_nodes = element
+        elem_nodes = np.asarray(elem_nodes)
+        elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
+        elem_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
+        faces.append(4)
+        faces += list(elem_nodes - 1)
+        cell_eids.append(eid)
+        cell_dofs_per_node.append(elem_dofs_per_node)
+        is_cut_elem = model.cut_info.get(eid)
+        if is_cut_elem is not None:
+            _, cut_type, _ = is_cut_elem
+            is_cut.append(cut_type == CutType.CUT or cut_type == CutType.PARTIAL)
+        else:
+            is_cut.append(False)
+    points = points_ref + displacements
+    faces_flat = np.array(faces)
+    points_ref = nodes[:, 1:4]
+    mesh = pv.PolyData(points, faces_flat)
+    mesh.point_data["points_ref"] = points_ref
+    mesh.point_data["displacement"] = displacements
+    mesh.cell_data["eid"] = np.asarray(cell_eids, dtype=int)
+    mesh.cell_data["dofs_per_node"] = np.asarray(cell_dofs_per_node)
+    mesh.cell_data["is_cut"] = np.asarray(is_cut)
+    return mesh
 
 
 def build_Quad4n(nodes, elements, node_stress=None):
@@ -60,6 +239,10 @@ def build_Tri3n(nodes, elements, node_stress=None):
             )
         mesh.point_data["node_stress"] = s
     return mesh
+
+
+def build_XTri3n(nodes, elements, cut_info, level_sets, node_stress=None):
+    nodes = np.asarray(nodes)
 
 
 def build_Tetr4n(nodes, elements, node_stress=None):

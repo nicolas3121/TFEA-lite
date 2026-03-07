@@ -19,7 +19,7 @@ def gen_nodal_forces(model, sel_condition, force_expression, tol=1e-8, reset=Tru
                 Fg[dof_id] += fx
             if fy != 0.0:
                 dof_id = model.list_dof[(nid, DofType.UY)]
-                print(dof_id)
+                # print(dof_id)
                 Fg[dof_id] += fy
             if fz != 0.0:
                 dof_id = model.list_dof[(nid, DofType.UZ)]

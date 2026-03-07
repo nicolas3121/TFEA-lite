@@ -28,12 +28,14 @@ class XTri3n(Tri3n):
         h_enrich: bool = False,
         t_enrich: bool = False,
         partial_cut: bool = False,
+        h_enrich_per_node=None,
     ):
         if not h_enrich and not t_enrich:
-            print("creating basic element instead")
+            # print("creating basic element instead")
             return Tri3n(node_coords, material, real)
         assert h_enrich is not None
         assert t_enrich is not None
+        assert partial_cut is not None
         return super().__new__(cls)
 
     def __init__(
@@ -46,6 +48,7 @@ class XTri3n(Tri3n):
         h_enrich: bool,
         t_enrich: bool,
         partial_cut: bool,
+        h_enrich_per_node=np.zeros(3),
     ):
         super().__init__(node_coords, material, real)
         self.phi_n = phi_n
@@ -53,6 +56,7 @@ class XTri3n(Tri3n):
         self.h_enrich = h_enrich
         self.t_enrich = t_enrich
         self.partial_cut = partial_cut
+        self.h_enrich_per_node = h_enrich_per_node
 
     def cal_element_matrices(self, eval_mass=False):
         n = N_DOFS + int(self.h_enrich) * H_DOFS + int(self.t_enrich) * TIP_DOFS
@@ -88,9 +92,7 @@ class XTri3n(Tri3n):
                 else:
                     Nc[j, i] = np.clip(1 / (1 - phi_j / phi_i), 0, 1)
                     Nc[i, i] = np.clip(1 - Nc[j, i], 0, 1)
-        if self.partial_cut:
-            self._integrate_partial_cut(Ke, Nc, J, detJ, B)
-        elif self.t_enrich and not self.h_enrich:
+        else:
             (rule, correction) = qd.TRI_RULES[10]
             begin_tip_fn = N_FN
             begin_tip_dofs = N_DOFS
@@ -103,7 +105,9 @@ class XTri3n(Tri3n):
                 res = B.T @ self.C @ TIP_B * w_eff
                 Ke[0:begin_tip_dofs, begin_tip_dofs:] += res
                 Ke[begin_tip_dofs:, 0:begin_tip_dofs] += res.T
-        else:
+        if self.partial_cut:
+            self._integrate_partial_cut(Ke, Nc, J, detJ, B)
+        elif self.h_enrich:
             begin_h_fn = N_FN
             begin_tip_fn = N_FN + H_FN
             begin_h_dofs = N_DOFS
@@ -120,8 +124,8 @@ class XTri3n(Tri3n):
                     continue
                 xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ N - x_e[0, :])
                 _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
-                print("shape_functions", _)
-                print("derivative", dN_dxi_sub)
+                # print("shape_functions", _)
+                # print("derivative", dN_dxi_sub)
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
                 HB = cal_B(dN_dxy_sub[:, begin_h_fn:begin_tip_fn])
                 w_eff = detJi * detJ * weight * self.t
@@ -134,7 +138,11 @@ class XTri3n(Tri3n):
                 if self.t_enrich:
                     (rule, correction) = qd.TRI_RULES[10]
                     for [xi, eta, w] in rule:
-                        _, dN_dxi_sub = self.shape_functions(xi, eta)
+                        n, _ = super().shape_functions(xi, eta)
+                        xi_sub, eta_sub = np.linalg.solve(
+                            J.T, x_e.T @ Ni @ n - x_e[0, :]
+                        )
+                        _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
                         dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
                         TIP_B = cal_B(dN_dxy_sub[:, begin_tip_fn:])
                         w_eff = w * correction * detJ * detJi * self.t
@@ -186,7 +194,7 @@ class XTri3n(Tri3n):
                 begin_tip *= DOFS
                 Ke[begin_tip:, begin_tip:] += (TIP_B.T @ self.C @ TIP_B) * w_eff
 
-                [xi_d, eta_d, w_d] = duffy.transform(u, v, beta=1)
+                [xi_d, eta_d, w_d] = duffy.transform(u, v, beta=2)
                 w_eff = w * correction * w_d * self.t * detJi * detJ
                 n, _ = super().shape_functions(xi_d, eta_d)
                 xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ n - x_e[0, :])
@@ -250,23 +258,29 @@ class XTri3n(Tri3n):
                     ]
                 ).T
             )
+            begin_tip = N_FN + int(self.h_enrich) * H_FN
+            end_tip = begin_tip + TIP_FN
             if self.h_enrich:
-                begin_tip, end_tip = N_FN + H_FN, N_FN + H_FN + TIP_FN
-                N[begin_tip:end_tip] = (
+                print(bf)
+                bf_shifted = (
                     (
                         bf
-                        - np.sign(phi_n) * np.sign(self.phi_n).reshape((-1, 1)) * bf_i.T
+                        - (1 - self.h_enrich_per_node[:, None]) * bf_i.T
+                        - self.h_enrich_per_node[:, None]
+                        * np.sign(phi_n)
+                        * np.sign(self.phi_n).reshape((-1, 1))
+                        * bf_i.T
                     )
                     * N[:N_FN].reshape((-1, 1))
                 ).reshape((1, TIP_FN))
             else:
-                begin_tip, end_tip = N_FN, N_FN + TIP_FN
-                N[begin_tip:end_tip] = (
-                    (bf - bf_i.T) * N[:N_FN].reshape((-1, 1))
-                ).reshape((1, TIP_FN))
+                bf_shifted = ((bf - bf_i.T) * N[:N_FN].reshape((-1, 1))).reshape(
+                    (1, TIP_FN)
+                )
+            N[begin_tip:end_tip] = bf_shifted
             term1 = dbf_dxi * N[:N_FN, None, None]  # (3, 2, 4)
             term2 = (
-                N[begin_tip:end_tip].reshape((-1, BRANCH_FN))[:, :, None]
+                bf_shifted.reshape((-1, BRANCH_FN))[:, :, None]
                 * dN_dxi[:, :N_FN].T[:, None, :]
             )  # (3, 4, 2)
             dN_dxi[0, begin_tip:end_tip] = (term1[:, 0, :] + term2[:, :, 0]).flatten()

@@ -1,7 +1,7 @@
 import numpy as np
 import sympy as sp
 from tfealite.elements.XTri3n import XTri3n
-from tfealite.elements.XTri3n import (
+from tfealite.core.quadratures import (
     GeneralizedDuffy,
     DuffyDistance,
     DuffySinh,
@@ -16,13 +16,13 @@ def test_rigid_body_modes_fully_cut():
 
     tri = XTri3n(
         nodes,
+        material,
+        real,
         np.array([-1, -1, 1]),
         np.array([-1, -1, 1]),
         True,
         False,
         False,
-        material,
-        real,
     )
     Ke = tri.cal_element_matrices(eval_mass=False)
     eigenvalues = np.abs(np.linalg.eigvals(Ke))

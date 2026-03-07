@@ -1,6 +1,8 @@
 import numpy as np
 import scipy as sp
 
+from tfealite.core.dofs import DofType
+
 
 def dirichlet_Lagrange_II(model, fix_dofs):
     model.fix_dofs = fix_dofs
@@ -39,6 +41,31 @@ def gen_dirichlet_bc(model, sel_condition, tol=1e-8):
             #     key = f"{nid}{d}"
             #     dof_id = model.list_dof[key]
             #     fix_dofs.append(dof_id)
+    if fix_dofs:
+        fix_dofs = np.array(sorted(set(fix_dofs)), dtype=int)
+    else:
+        fix_dofs = np.zeros(0, dtype=int)
+    model.gen_P(fix_dofs)
+
+
+def my_gen_dirichlet_bc(model, sel_condition, extra_nodes, tol=1e-8):
+    fix_dofs = []
+    for node in model.nodes:
+        nid = int(node[0])
+        x, y, z = map(float, node[1:4])
+
+        if abs(sel_condition(x, y, z)) < tol:
+            for offset in range(0, np.bitwise_count(model.dof_per_node)):
+                fix_dofs.append(model.list_dof[(nid, 1 << offset)])
+
+    extra_fix_dofs = model.list_dof.get_elem_dof_numbers(
+        extra_nodes, DofType.HX | DofType.HY
+    ).flatten()
+    for dof in extra_fix_dofs:
+        fix_dofs.append(dof)
+    for dof in extra_fix_dofs:
+        fix_dofs.append(dof)
+
     if fix_dofs:
         fix_dofs = np.array(sorted(set(fix_dofs)), dtype=int)
     else:

@@ -33,8 +33,8 @@ def gen_rect_Quad4n(L, H, nx=20, ny=20):
     eid = 1
     for j in range(ny):
         for i in range(nx):
-            if i < 3 and j == 8:
-                continue
+            # if i < 3 and j == 8:
+            #     continue
             n1 = j * (nx + 1) + i + 1
             n2 = n1 + 1
             n3 = n2 + (nx + 1)

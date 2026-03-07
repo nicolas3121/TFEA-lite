@@ -40,6 +40,7 @@ def cal_KgMg(
         local_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
         if xfem:
             h_enrich = local_dofs_per_node & HEAVISIDE_DOFS != 0
+            h_enrich_per_node = elem_dofs & HEAVISIDE_DOFS != 0
             t_enrich = local_dofs_per_node & BRANCH_DOFS != 0
             # h_enrich = np.any(np.bitwise_and(HEAVISIDE_DOFS, elem_dofs))
             # t_enrich = np.any(np.bitwise_and(BRANCH_DOFS, elem_dofs))
@@ -63,18 +64,6 @@ def cal_KgMg(
                         ]
                         - 1
                     ]
-                    # print(
-                    #     "tip",
-                    #     tip,
-                    #     elem_dofs,
-                    #     np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0),
-                    #     elem_nodes[
-                    #         np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0)
-                    #     ],
-                    #     elem_nodes,
-                    # )
-                    # if tip == 1:
-                    #     print("tip is 1", ele_info[0])
                 phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
                 assert cut_info
                 ci = cut_info.get(ele_info[0])
@@ -91,6 +80,7 @@ def cal_KgMg(
                     h_enrich,
                     t_enrich,
                     partial_cut,
+                    h_enrich_per_node,
                 )
             else:
                 elem = elem_func(elem_vertices, material, real)
@@ -100,6 +90,8 @@ def cal_KgMg(
             Me, Ke = elem.cal_element_matrices(eval_mass=True)
         else:
             Ke = elem.cal_element_matrices(eval_mass=False)
+            # Ke2 = elem.cal_element_matrices2(eval_mass=False)
+            # assert np.all(np.isclose())
         # print("base", model.list_dof.get_elem_dof_numbers_flat(elem_nodes, BASE_DOFS))
         # print(
         #     "heaviside",
