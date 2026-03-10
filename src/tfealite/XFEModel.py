@@ -16,6 +16,7 @@ class XFEModel(FEModel):
         reals,
         tip_enrichment=False,
         geometrical_range=0.0,
+        corrected=False,
     ):
         FEModel.__init__(self, nodes, elements, materials, reals)
         self.base_list_dof = None
@@ -26,6 +27,11 @@ class XFEModel(FEModel):
         self.geometrical_range = geometrical_range
         self.ls = np.zeros(self.n_nodes, dtype=np.int32)
         self.tip = np.zeros(self.n_nodes, dtype=np.int32)
+        self.corrected = corrected
+        if corrected:
+            self.in_range = np.zeros(self.n_nodes, dtype=np.int32)
+        else:
+            self.in_range = np.ones(self.n_nodes, dtype=np.int32)
 
     def gen_list_dof(self, dof_per_node):
         self.dof_per_node = dof_per_node
@@ -48,6 +54,8 @@ class XFEModel(FEModel):
                             self.tip[nodes - 1] = tip
                             self.cut_info[id] = (i, cut_type, tip)
                             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                            if self.corrected:
+                                self.in_range[nodes - 1] = 1
                     else:
                         # TODO: pas echt aan het touchen als alle intersecties 0 of 1 zijn
                         # touching = np.argwhere(np.isclose(phi_n, 0))
@@ -60,20 +68,28 @@ class XFEModel(FEModel):
 
                         self.list_dof.add_dofs(filtered, dofs.IS_2D_HEAVISIDE)
                         if self.tip_enrichment:
-                            in_range, tip = ls.in_range(elem, self.geometrical_range)
-                            if in_range:
+                            is_in_range, tip, in_range = ls.in_range(
+                                elem, self.geometrical_range
+                            )
+                            if is_in_range:
                                 self.tip[nodes - 1] = tip
                                 self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                                if self.corrected:
+                                    self.in_range[nodes - 1] = in_range
                         self.ls[nodes - 1] = i
                         self.cut_info[id] = (i, cut_type, tip)
                 else:
                     if self.tip_enrichment:
-                        in_range, tip = ls.in_range(elem, self.geometrical_range)
-                        if in_range:
+                        is_in_range, tip, in_range = ls.in_range(
+                            elem, self.geometrical_range
+                        )
+                        if is_in_range:
                             self.tip[nodes - 1] = tip
                             self.ls[nodes - 1] = i
                             self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
                             self.cut_info[id] = (i, CutType.NONE, tip)
+                            if self.corrected:
+                                self.in_range[nodes - 1] = in_range
             # for elem_id, ci in self.cut_info.items():
         for elem_id, ci in partial_cuts:
             i, cut_type, tip = ci
@@ -94,6 +110,7 @@ class XFEModel(FEModel):
             eval_mass=eval_mass,
             xfem=True,
             tip_enrich=self.tip_enrichment,
+            corrected=self.corrected,
             skip_elements=skip_elements,
         )
 

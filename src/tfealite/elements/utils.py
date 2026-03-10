@@ -5,8 +5,8 @@ from typing import Final
 def branch_functions(sqrt_r, theta):
     return sqrt_r * np.array(
         [
-            np.cos(theta / 2),
             np.sin(theta / 2),
+            np.cos(theta / 2),
             np.sin(theta / 2) * np.sin(theta),
             np.cos(theta / 2) * np.sin(theta),
         ]

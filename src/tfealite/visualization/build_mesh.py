@@ -34,9 +34,9 @@ def build_XQuad4n(model, node_stress=None):
             centroid = np.mean(Ni, axis=1)
             Ni = centroid[:, None] + (Ni - centroid[:, None]) * 0.99999
             sub_nat_x_e = Ni.T @ nat_x_e
-            sub_shape_functions = np.array(
-                [elem.shape_functions(xi[0], xi[1])[0] for xi in sub_nat_x_e]
-            )
+            sub_shape_functions = elem.shape_functions2(
+                sub_nat_x_e[:, 0], sub_nat_x_e[:, 1]
+            )[0]
             sub_vertices = sub_shape_functions[:, :4] @ elem_vertices
 
             displacements.append(sub_shape_functions @ Ue)
@@ -105,6 +105,7 @@ def build_XQuad4n(model, node_stress=None):
         material = model.materials[mat_id - 1][1]
         real = model.reals[real_id - 1][1]
         phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
+        in_range = model.in_range[elem_nodes - 1]
 
         elem = XQuad4n(
             elem_vertices,
@@ -115,6 +116,7 @@ def build_XQuad4n(model, node_stress=None):
             h_enrich,
             t_enrich,
             partial_cut,
+            in_range,
         )
         Ue = Ue.reshape((-1, 2))
 

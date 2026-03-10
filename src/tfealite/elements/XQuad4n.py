@@ -10,12 +10,12 @@ DOFS: Final = 2
 BRANCH_FN: Final = 4  # branch functions
 N_FN: Final = NODES
 H_FN: Final = NODES
+LH_FN: Final = 2 * NODES
 TIP_FN: Final = NODES * BRANCH_FN
 N_DOFS: Final = DOFS * N_FN
 H_DOFS: Final = DOFS * H_FN
+LH_DOFS: Final = DOFS * LH_FN
 TIP_DOFS: Final = DOFS * TIP_FN
-
-CONTINUOUS_BRANCH_MASK = np.array([1, 1, 1, 1])
 
 NAT_1: Final = np.array([[-1, -1], [1, -1], [1, 1]])
 NAT_2: Final = np.array([[-1, -1], [1, 1], [-1, 1]])
@@ -32,7 +32,7 @@ class XQuad4n(Quad4n):
         h_enrich: bool = False,
         t_enrich: bool = False,
         partial_cut: bool = False,
-        h_enrich_per_node=None,
+        in_range=None,
     ):
         if not h_enrich and not t_enrich:
             # print("creating basic element instead")
@@ -54,7 +54,7 @@ class XQuad4n(Quad4n):
         h_enrich: bool,
         t_enrich: bool,
         partial_cut: bool,
-        h_enrich_per_node=np.zeros(4),
+        in_range=np.ones(4, dtype=bool),
     ):
         super().__init__(node_coords, material, real)
         self.phi_n = phi_n
@@ -62,10 +62,15 @@ class XQuad4n(Quad4n):
         self.h_enrich = h_enrich
         self.t_enrich = t_enrich
         self.partial_cut = partial_cut
-        self.h_enrich_per_node = h_enrich_per_node
+        self.in_range = in_range
 
     def cal_element_matrices2(self, eval_mass=False):
-        n = N_DOFS + int(self.h_enrich) * H_DOFS + int(self.t_enrich) * TIP_DOFS
+        n = (
+            N_DOFS
+            + int(self.h_enrich) * H_DOFS
+            # + int(self.h_enrich) * LH_DOFS
+            + int(self.t_enrich) * TIP_DOFS
+        )
         Ke = np.zeros((n, n))
         x_e = self.node_coords
         rule, correction = qd.QUAD_RULES[3]
@@ -212,9 +217,17 @@ class XQuad4n(Quad4n):
         num[-1] = self.phi_n[0]
         denom = num - self.phi_n
         unsolvable = np.isclose(denom, 0)
-        denom += unsolvable
-        N1 = np.clip(num / denom * ~unsolvable * ~np.isclose(self.phi_n, 0), 0, 1)
-        N1 += unsolvable | np.isclose(self.phi_n, 0)
+        on_crack = np.isclose(self.phi_n, 0)
+        N1 = np.clip(
+            np.divide(
+                num,
+                denom,
+                out=np.ones_like(num),
+                where=~unsolvable & ~on_crack,
+            ),
+            0,
+            1,
+        )
         num_diag = self.phi_n[0]
         denom_diag = num_diag - self.phi_n[2]
         unsolvable_diag = np.isclose(denom_diag, 0)
@@ -273,7 +286,7 @@ class XQuad4n(Quad4n):
         if self.t_enrich:
             rule, correction = qd.TRI_RULES[10]
         else:
-            rule, correction = qd.TRI_RULES[3]
+            rule, correction = qd.TRI_RULES[6]
         x_e = self.node_coords
         for i in range(4):
             if i != 3:
@@ -317,7 +330,7 @@ class XQuad4n(Quad4n):
         if self.t_enrich:
             rule, correction = qd.TRI_RULES[10]
         else:
-            rule, correction = qd.TRI_RULES[3]
+            rule, correction = qd.TRI_RULES[6]
         x_e = self.node_coords
         for Ni, detJi in self._cut_embedding_iter(Nc):
             xi = rule[:, 0]
@@ -512,6 +525,26 @@ class XQuad4n(Quad4n):
             )
         )
         (N[:, :N_FN], dN_dxi[:, :, :N_FN]) = super().shape_functions2(xi, eta)
+        Q0_xi = (xi - 1) ** 2 * (xi + 2) / 4
+        Q1_xi = (2 - xi) * (xi + 1) ** 2 / 4
+        Q0_eta = (eta - 1) ** 2 * (eta + 2) / 4
+        Q1_eta = (2 - eta) * (eta + 1) ** 2 / 4
+        Q = np.array(
+            [
+                Q0_xi * Q0_eta,
+                Q1_xi * Q0_eta,
+                Q1_xi * Q1_eta,
+                Q0_xi * Q1_eta,
+            ]
+        ).T
+        dQ0_xi = 3 / 4 * (xi**2 - 1)
+        dQ1_xi = 3 / 4 * (1 - xi**2)
+        dQ0_eta = 3 / 4 * (eta**2 - 1)
+        dQ1_eta = 3 / 4 * (1 - eta**2)
+        row1 = [dQ0_xi * Q0_eta, dQ1_xi * Q0_eta, dQ1_xi * Q1_eta, dQ0_xi * Q1_eta]
+        row2 = [Q0_xi * dQ0_eta, Q1_xi * dQ0_eta, Q1_xi * dQ1_eta, Q0_xi * dQ1_eta]
+        dQ_dxi = np.stack([row1, row2]).transpose(2, 0, 1)
+
         phi_n = np.sum(self.phi_n * N[:, :N_FN], axis=1)
         phi_t = np.sum(self.phi_t * N[:, :N_FN], axis=1)
         if self.h_enrich:
@@ -544,8 +577,8 @@ class XQuad4n(Quad4n):
                 bf / sqrt_r[:, None]
             )[:, None, :] + sqrt_r[:, None, None] * np.array(
                 [
-                    -np.sin(theta[:, None] / 2) * dtheta_dxi / 2,
                     np.cos(theta[:, None] / 2) * dtheta_dxi / 2,
+                    -np.sin(theta[:, None] / 2) * dtheta_dxi / 2,
                     np.cos(theta[:, None] / 2) * dtheta_dxi / 2 * np.sin(theta[:, None])
                     + np.sin(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
                     -np.sin(theta[:, None] / 2)
@@ -555,29 +588,16 @@ class XQuad4n(Quad4n):
                     + np.cos(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
                 ]
             ).transpose(1, 2, 0)
-            if self.h_enrich:
-                # only discontinuous branch function is sin(theta / 2)
-                print(self.h_enrich_per_node)
-                print(self.node_coords)
-                is_continuous_shift = (1 - self.h_enrich_per_node)[
-                    :, None
-                ] + self.h_enrich_per_node[:, None] * CONTINUOUS_BRANCH_MASK[None, :]
-                print(is_continuous_shift)
-                shifter = (
-                    is_continuous_shift[None, :, :]
-                    + (1 - is_continuous_shift[None, :, :])
-                    * np.sign(phi_n[:, None, None])
-                    * np.sign(self.phi_n[None, :, None])
-                ) * bf_i[None, :, :]
-            else:
-                shifter = bf_i[None, :, :]
+            shifter = bf_i[None, :, :]
             interpolant = np.sum(shifter * N[:, :N_FN, None], axis=1)
             begin_tip = N_FN + int(self.h_enrich) * H_FN
             end_tip = begin_tip + TIP_FN
             bf_shifted = bf - interpolant
+            ramp = np.sum(N[:, np.where(self.in_range)[0]], axis=1)
+            dramp_dxi = np.sum(dN_dxi[:, :, np.where(self.in_range)[0]], axis=2)
 
             N[:, begin_tip:end_tip] = (
-                bf_shifted[:, None, :] * N[:, :N_FN, None]
+                bf_shifted[:, None, :] * ramp[:, None, None] * Q[:, :, None]
             ).reshape(-1, TIP_FN)
 
             term1 = (
@@ -585,27 +605,150 @@ class XQuad4n(Quad4n):
                     dbf_dxi
                     - np.sum(shifter[:, None, :, :] * dN_dxi[:, :, :N_FN, None], axis=2)
                 )[:, None, :, :]  # (n, 1, 2, 4)
-                * N[:, :N_FN, None, None]  # (n, 4, 1, 1)
+                * ramp[:, None, None, None]  # (n)
+                * Q[:, :, None, None]  # (n, 4, 1, 1)
             )  # (n, 4, 2, 4)
-
             term2 = (
+                bf_shifted[:, None, None, :]
+                * dramp_dxi[:, :, None, None]
+                * Q[:, None, :, None]
+            )  # (n, 2, 4, 4)
+
+            term3 = (
                 bf_shifted[:, None, None, :]  # (n, 1, 1, 4)
-                * dN_dxi[:, :, :N_FN, None]  # (n, 2, 4, 1)
+                * ramp[:, None, None, None]
+                * dQ_dxi[:, :, :, None]  # (n, 2, 4, 1)
             )  # (n, 2, 4, 4)
             dN_dxi[:, 0, begin_tip:end_tip] = (
-                term1[:, :, 0, :] + term2[:, 0, :, :]
+                term1[:, :, 0, :] + term2[:, 0, :, :] + term3[:, 0, :, :]
             ).reshape(-1, TIP_FN)
             dN_dxi[:, 1, begin_tip:end_tip] = (
-                term1[:, :, 1, :] + term2[:, 1, :, :]
+                term1[:, :, 1, :] + term2[:, 1, :, :] + term3[:, 1, :, :]
             ).reshape(-1, TIP_FN)
         return N, dN_dxi
+
+    # def shape_functions2(self, xi, eta):
+    #     n_points = xi.shape[0]
+    #     N = np.empty(
+    #         (n_points, N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN)
+    #     )
+    #     dN_dxi = np.empty(
+    #         (
+    #             n_points,
+    #             DOFS,
+    #             N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN,
+    #         )
+    #     )
+    #     (N[:, :N_FN], dN_dxi[:, :, :N_FN]) = super().shape_functions2(xi, eta)
+    #     phi_n = np.sum(self.phi_n * N[:, :N_FN], axis=1)
+    #     phi_t = np.sum(self.phi_t * N[:, :N_FN], axis=1)
+    #     if self.h_enrich:
+    #         h_shifted = (np.sign(phi_n)[:, None] - np.sign(self.phi_n)) / 2
+    #         begin_h, end_h = N_FN, N_FN + H_FN
+    #         N[:, begin_h:end_h] = h_shifted * N[:, :N_FN]
+    #         dN_dxi[:, :, begin_h:end_h] = h_shifted[:, None, :] * dN_dxi[:, :, :N_FN]
+    #     if self.t_enrich:
+    #         r = np.sqrt(phi_n**2 + phi_t**2)
+    #         r = np.maximum(r, 1e-14)  # avoid divide by zero
+    #         sqrt_r = np.sqrt(r)
+    #         sqrt_r_i = (self.phi_n**2 + self.phi_t**2) ** (1 / 4)
+    #         theta = np.atan2(phi_n, phi_t)
+    #         theta_i = np.atan2(self.phi_n, self.phi_t)
+    #         dphi_n_dxi = np.sum(self.phi_n * dN_dxi[:, :, :N_FN], axis=2)
+    #         dphi_t_dxi = np.sum(self.phi_t * dN_dxi[:, :, :N_FN], axis=2)
+    #         # sin(theta) = phi_n / r, cos(theta) = phi_t / r
+    #         dr_dxi = (
+    #             1
+    #             / r[:, None]
+    #             * (phi_n[:, None] * dphi_n_dxi + phi_t[:, None] * dphi_t_dxi)
+    #         )  # = np.sin(theta) * dphi_n_dxi - np.cos(theta) * dphi_t_dxi
+    #         dtheta_dxi = (dphi_n_dxi * phi_t[:, None] - phi_n[:, None] * dphi_t_dxi) / (
+    #             phi_t**2 + phi_n**2
+    #         )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
+    #         bf_orig = branch_functions(sqrt_r, theta)  # (4, n)
+    #         bf_i_orig = branch_functions(sqrt_r_i, theta_i)  # (4, N_NODES)
+    #         bf_shifted = bf_orig[:, None, :] - bf_i_orig[:, :, None]
+    #         bf = bf_orig.T
+    #         c23 = -2.0 * np.cos(theta_i) * np.sin(theta_i / 2) ** 2
+    #         c13 = (1.0 + np.cos(theta_i)) * np.sin(theta_i)
+    #         c34 = np.zeros_like(theta_i)
+    #         mask_34 = ~(
+    #             np.isclose(np.abs(theta_i), np.pi / 3, atol=0.05)
+    #             | np.isclose(np.abs(theta_i), np.pi, atol=0.05)
+    #         )
+    #         theta_i_mask = theta_i[mask_34]
+    #         c34[mask_34] = -(
+    #             7 * np.sin(theta_i_mask)
+    #             + 11 * np.sin(2 * theta_i_mask)
+    #             + 65 * np.sin(3 * theta_i_mask)
+    #         ) / (36 * (1 + np.cos(3 * theta_i_mask)))
+    #         c24 = (1 - np.cos(theta_i)) * np.sin(theta_i)
+    #         c14 = 2 * np.cos(theta_i / 2) ** 2 * np.cos(theta_i)
+    #         bf_shifted[2, :, :] -= (
+    #             c13[:, None] * bf_shifted[0, :, :] + c23[:, None] * bf_shifted[1, :, :]
+    #         )
+    #         bf_shifted[3, :, :] -= (
+    #             c14[:, None] * bf_shifted[0, :, :]
+    #             + c24[:, None] * bf_shifted[1, :, :]
+    #             + c34[:, None] * bf_shifted[2, :, :]
+    #         )
+    #         bf_shifted = bf_shifted.transpose(2, 1, 0)
+    #
+    #         dbf_dxi = 1 / (2 * sqrt_r[:, None, None]) * dr_dxi.reshape((-1, 2, 1)) * (
+    #             bf / sqrt_r[:, None]
+    #         )[:, None, :] + sqrt_r[:, None, None] * np.array(
+    #             [
+    #                 np.cos(theta[:, None] / 2) * dtheta_dxi / 2,
+    #                 -np.sin(theta[:, None] / 2) * dtheta_dxi / 2,
+    #                 np.cos(theta[:, None] / 2) * dtheta_dxi / 2 * np.sin(theta[:, None])
+    #                 + np.sin(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
+    #                 -np.sin(theta[:, None] / 2)
+    #                 * dtheta_dxi
+    #                 / 2
+    #                 * np.sin(theta[:, None])
+    #                 + np.cos(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
+    #             ]
+    #         ).transpose(1, 2, 0)
+    #         # shifter = bf_i[None, :, :]
+    #         # interpolant = np.sum(shifter * N[:, :N_FN, None], axis=1)
+    #         begin_tip = N_FN + int(self.h_enrich) * H_FN
+    #         end_tip = begin_tip + TIP_FN
+    #
+    #         N[:, begin_tip:end_tip] = (bf_shifted * N[:, :N_FN, None]).reshape(
+    #             -1, TIP_FN
+    #         )
+    #         term1 = dbf_dxi[:, None, :, :] * N[:, :N_FN, None, None]  # (n, 4, 2, 4)
+    #         term1[:, :, :, 2] -= (
+    #             c13[None, :, None] * term1[:, :, :, 0]
+    #             + c23[None, :, None] * term1[:, :, :, 1]
+    #         )
+    #         term1[:, :, :, 3] -= (
+    #             c14[None, :, None] * term1[:, :, :, 0]
+    #             + c24[None, :, None] * term1[:, :, :, 1]
+    #             + c34[None, :, None] * term1[:, :, :, 2]
+    #         )
+    #         term2 = (
+    #             bf_shifted[:, None, :, :] * dN_dxi[:, :, :N_FN, None]
+    #         )  # (n, 2, 4, 4)
+    #         dN_dxi[:, 0, begin_tip:end_tip] = (
+    #             term1[:, :, 0, :] + term2[:, 0, :, :]
+    #         ).reshape(-1, TIP_FN)
+    #         dN_dxi[:, 1, begin_tip:end_tip] = (
+    #             term1[:, :, 1, :] + term2[:, 1, :, :]
+    #         ).reshape(-1, TIP_FN)
+    #     return N, dN_dxi
 
     def cal_stresses(self, xi, eta, Ue):
         Ue = np.asarray(Ue, dtype=float).ravel()
         _, dN_dxi = self.shape_functions2(xi, eta)
-        J = dN_dxi @ self.node_coords
+        J = dN_dxi[:, :, :N_FN] @ self.node_coords
         dN_dxy = np.linalg.solve(J, dN_dxi)
         B = cal_B_2d_vec(dN_dxy)
         eps = B @ Ue
         sig = self.C @ eps
         return sig
+
+    def stresses_at_nodes(self, Ue):
+        xi = np.array([-1.0, 1.0, 1.0, -1.0])
+        eta = np.array([-1.0, -1.0, 1.0, 1.0])
+        return self.cal_stresses(xi, eta, Ue)
