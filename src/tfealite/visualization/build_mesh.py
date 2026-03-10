@@ -24,12 +24,13 @@ def build_XQuad4n(model, node_stress=None):
     n_nodes = 4
     points_ref = []
     displacements = []
+    stresses = []
 
     faces = []
 
     # kan mogelijk extra set barycentrische coordinates gebruiken voor binnen mijn nieuwe driehoek
     # teken bekijken volgende, vorige n
-    def build_triangles(iter, Ue, nat_x_e, elem_vertices):
+    def build_triangles(iter, Ue, nat_x_e, elem_vertices, phi_t):
         for Ni, _ in iter:
             centroid = np.mean(Ni, axis=1)
             Ni = centroid[:, None] + (Ni - centroid[:, None]) * 0.99999
@@ -37,12 +38,23 @@ def build_XQuad4n(model, node_stress=None):
             sub_shape_functions = elem.shape_functions2(
                 sub_nat_x_e[:, 0], sub_nat_x_e[:, 1]
             )[0]
-            sub_vertices = sub_shape_functions[:, :4] @ elem_vertices
+            sub_phi_t = np.sum(sub_shape_functions[:, :4] * phi_t[None, :], axis=1)
 
-            displacements.append(sub_shape_functions @ Ue)
+            sub_vertices = sub_shape_functions[:, :4] @ elem_vertices
+            node_displacements = sub_shape_functions @ Ue
+            in_front = np.where(
+                (sub_phi_t > 0) & ~np.isclose(sub_phi_t, 0, atol=0.0001)
+            )[0]
+            if len(in_front):
+                node_displacements[in_front, :] = (
+                    sub_shape_functions[in_front, :4] @ Ue[:4, :]
+                )
+
+            displacements.append(node_displacements)
             n_points = 3 * len(points_ref)
             faces.extend([3, n_points, n_points + 1, n_points + 2])
             points_ref.append(sub_vertices)
+            stresses.append(elem.cal_stresses(sub_nat_x_e[:, 0], sub_nat_x_e[:, 1], Ue))
 
     for elem_id, (_, cut_type, _) in cut_info.items():
         element = model.elements[elem_id - 1]
@@ -135,17 +147,24 @@ def build_XQuad4n(model, node_stress=None):
         else:
             iter1 = elem._cut_embedding_iter(Nc1)
             iter2 = elem._cut_embedding_iter(Nc2)
-        build_triangles(iter1, Ue, np.array([[-1, -1], [1, -1], [1, 1]]), elem_vertices)
-        build_triangles(iter2, Ue, np.array([[-1, -1], [1, 1], [-1, 1]]), elem_vertices)
+        # print(len(phi_t))
+        build_triangles(
+            iter1, Ue, np.array([[-1, -1], [1, -1], [1, 1]]), elem_vertices, phi_t
+        )
+        build_triangles(
+            iter2, Ue, np.array([[-1, -1], [1, 1], [-1, 1]]), elem_vertices, phi_t
+        )
 
     points_ref = np.array(points_ref).reshape((-1, 2))
     displacements = np.array(displacements).reshape((-1, 2))
     points_ref = np.hstack((points_ref, np.zeros((points_ref.shape[0], 1))))
     displacements = np.hstack((displacements, np.zeros((displacements.shape[0], 1))))
+    stresses = np.concatenate(stresses, axis=0)
     points = points_ref + displacements
     mesh = pv.PolyData(points, faces)
     mesh.point_data["points_ref"] = points_ref
     mesh.point_data["displacement"] = displacements
+    mesh.point_data["stress"] = stresses[:, 1]
     return mesh
 
 
