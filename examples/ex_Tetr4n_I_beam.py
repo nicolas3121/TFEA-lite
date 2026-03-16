@@ -8,8 +8,8 @@ model = tf.FEModel(nodes, elements, materials, reals)
 # model.show()
 
 # %% Finite element formulation
-model.gen_list_dof(dof_per_node=["ux", "uy", "uz"])
-model.cal_global_matrices()
+model.gen_list_dof(dof_per_node=tf.IS_3D)
+model.cal_global_matrices(tf.Tetr4n)
 
 
 # %% B.C. definition

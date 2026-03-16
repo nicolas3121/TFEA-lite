@@ -1,9 +1,10 @@
 from numpy.typing import NDArray
+import numpy as np
 from .FEModel import FEModel
-from .core import level_set
+from .core.level_set import LevelSet, CutType
 from .core import model
 from .core import assembly as asm
-import copy
+from .core import dofs
 
 
 class XFEModel(FEModel):
@@ -13,49 +14,128 @@ class XFEModel(FEModel):
         elements,
         materials,
         reals,
+        tip_enrichment=False,
+        geometrical_range=0.0,
+        corrected=False,
     ):
         FEModel.__init__(self, nodes, elements, materials, reals)
         self.base_list_dof = None
         self.level_set = []
-
-    def gen_list_dof(self, dof_per_node=["ux", "uy", "uz"]):
-        if self.base_list_dof is None:
-            model.gen_list_dof(self, dof_per_node=dof_per_node)
-            self.base_list_dof = copy.deepcopy(self.list_dof)
+        self.level_sets = []
+        self.cut_info = {}
+        self.tip_enrichment = tip_enrichment
+        self.geometrical_range = geometrical_range
+        self.ls = np.zeros(self.n_nodes, dtype=np.int32)
+        self.tip = np.zeros(self.n_nodes, dtype=np.int32)
+        self.corrected = corrected
+        if corrected:
+            self.in_range = np.zeros(self.n_nodes, dtype=np.int32)
         else:
-            self.list_dof = copy.deepcopy(self.base_list_dof)
-        cut_elem = self.level_set[2]
-        self.level_set[3]
-        assert self.list_dof
-        assert self.n_dof
-        counter = self.n_dof
-        for id in cut_elem:
-            element = self.elements[id - 1]
-            assert id == element[0]
-            nodes = element[4]
-            for node in nodes:
-                for dof in dof_per_node:
-                    key = str(int(node)) + dof + "H"
-                    if key not in self.list_dof:
-                        self.list_dof |= {key: counter}
-                        counter += 1
-        # for id in partial_cut_elem:
-        #     element = self.elements[id - 1]
-        #     assert id == element[0]
-        #     nodes = element[4]
-        #     for node in nodes:
-        #         for dof in dof_per_node:
-        #             for i in range(4):
-        #                 key = str(int(node)) + dof + "B" + str(i)
-        #                 if key not in self.list_dof:
-        #                     self.list_dof |= {key: counter}
-        #                     counter += 1
-        self.n_dof = len(self.list_dof)
+            self.in_range = np.ones(self.n_nodes, dtype=np.int32)
 
-    def cal_global_matrices(self, eval_mass=False, skip_elements={}):
-        asm.cal_KgMg_XFEM(self, eval_mass=eval_mass, skip_elements=skip_elements)
+    def gen_list_dof(self, dof_per_node):
+        self.dof_per_node = dof_per_node
+        model.gen_list_dof(self, dof_per_node)
+        assert self.list_dof is not None
+        assert self.level_sets
+        partial_cuts = []
+        for elem in self.elements:
+            id = elem[0]
+            nodes = np.asarray(elem[4])
+            for i, ls in enumerate(self.level_sets):
+                cut_type, tip, touching = ls.is_cut(elem)
+                if cut_type != CutType.NONE:
+                    if id in self.cut_info:
+                        print("warning: element already cut by other level set")
+                    if cut_type == CutType.PARTIAL:
+                        partial_cuts.append((id, (i, cut_type, tip)))
+                        if self.tip_enrichment:
+                            self.ls[nodes - 1] = i
+                            self.tip[nodes - 1] = tip
+                            self.cut_info[id] = (i, cut_type, tip)
+                            self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                            if self.corrected:
+                                self.in_range[nodes - 1] = 1
+                    else:
+                        # TODO: pas echt aan het touchen als alle intersecties 0 of 1 zijn
+                        # touching = np.argwhere(np.isclose(phi_n, 0))
+                        if touching:
+                            print("touching")
+                            phi_n, _ = ls.get(nodes, None)
+                            filtered = nodes[np.argwhere(np.isclose(phi_n, 0))]
+                        else:
+                            filtered = nodes
+                        phi_n, phi_t = ls.get(nodes, None)
+                        # print(
+                        #     "id",
+                        #     id,
+                        #     "phi_n",
+                        #     np.array_repr(phi_n),
+                        #     "phi_t",
+                        #     np.array_repr(phi_t),
+                        # )
 
-    def insert_crack_segment(self, p1: NDArray, p2: NDArray):
-        self.level_set = level_set.gen_from_line_segment(
-            self.nodes, self.elements, p1, p2
+                        self.list_dof.add_dofs(filtered, dofs.IS_2D_HEAVISIDE)
+                        if self.tip_enrichment:
+                            is_in_range, tip, in_range = ls.in_range(
+                                elem, self.geometrical_range
+                            )
+                            if is_in_range:
+                                # print("tip_enriched")
+                                self.tip[nodes - 1] = tip
+                                self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                                if self.corrected:
+                                    self.in_range[nodes - 1] = in_range
+                        self.ls[nodes - 1] = i
+                        self.cut_info[id] = (i, cut_type, tip)
+                else:
+                    if self.tip_enrichment:
+                        is_in_range, tip, in_range = ls.in_range(
+                            elem, self.geometrical_range
+                        )
+                        if is_in_range:
+                            self.tip[nodes - 1] = tip
+                            self.ls[nodes - 1] = i
+                            self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                            self.cut_info[id] = (i, CutType.NONE, tip)
+                            if self.corrected:
+                                self.in_range[nodes - 1] = in_range
+            # for elem_id, ci in self.cut_info.items():
+        for elem_id, ci in partial_cuts:
+            i, cut_type, tip = ci
+            print(cut_type)
+            if cut_type == CutType.PARTIAL:
+                nodes = self.elements[elem_id - 1][4]
+                nodes = np.asarray(nodes)
+                self.tip[nodes - 1] = tip
+                self.ls[nodes - 1] = i
+                self.list_dof.remove_dofs(nodes, dofs.IS_2D_HEAVISIDE)
+
+        self.list_dof.update()
+
+    def cal_global_matrices(self, elem, eval_mass=False, skip_elements={}):
+        asm.cal_KgMg(
+            self,
+            elem,
+            eval_mass=eval_mass,
+            xfem=True,
+            tip_enrich=self.tip_enrichment,
+            corrected=self.corrected,
+            skip_elements=skip_elements,
         )
+
+    def insert_crack_segment(self, p1: NDArray, p2: NDArray, embedded):
+        ls = LevelSet()
+        ls.gen_from_line_segment(self.nodes, p1, p2, embedded=embedded)
+        self.level_sets.append(ls)
+
+    def insert_crack_spline(self, bspline, embedded):
+        ls = LevelSet()
+        ls.gen_from_bspline(
+            self.nodes,
+            bspline,
+            embedded=embedded,
+            h=0.05,
+            geometrical_range=1.5 * self.geometrical_range,
+        )
+        self.level_sets.append(ls)

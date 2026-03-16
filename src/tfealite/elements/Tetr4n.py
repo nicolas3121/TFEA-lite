@@ -2,7 +2,7 @@ import numpy as np
 
 
 class Tetr4n:
-    def __init__(self, node_coords, material):
+    def __init__(self, node_coords, material, _):
         self.node_coords = np.asarray(node_coords, dtype=float).reshape(4, 3)
         self.material = material
 
