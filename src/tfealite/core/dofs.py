@@ -11,6 +11,9 @@ class DofType(IntFlag):
     HX = auto()
     HY = auto()
     HZ = auto()
+    LHX = auto()
+    LHY = auto()
+    LHZ = auto()
     B1X = auto()
     B1Y = auto()
     B1Z = auto()
@@ -27,20 +30,12 @@ class DofType(IntFlag):
 
 BASE_DOFS: Final = DofType.UX | DofType.UY | DofType.UZ
 HEAVISIDE_DOFS: Final = DofType.HX | DofType.HY | DofType.HZ
-BRANCH_DOFS: Final = (
-    DofType.B1X
-    | DofType.B1Y
-    | DofType.B1Z
-    | DofType.B2X
-    | DofType.B2Y
-    | DofType.B2Z
-    | DofType.B3X
-    | DofType.B3Y
-    | DofType.B3Z
-    | DofType.B4X
-    | DofType.B4Y
-    | DofType.B4Z
-)
+LINEAR_HEAVISIDE_DOFS = DofType.LHX | DofType.LHY | DofType.LHZ
+BRANCH_1_DOFS: Final = DofType.B1X | DofType.B1Y | DofType.B1Z
+BRANCH_2_DOFS: Final = DofType.B2X | DofType.B2Y | DofType.B2Z
+BRANCH_3_DOFS: Final = DofType.B3X | DofType.B3Y | DofType.B3Z
+BRANCH_4_DOFS: Final = DofType.B4X | DofType.B4Y | DofType.B4Z
+BRANCH_DOFS: Final = BRANCH_1_DOFS | BRANCH_2_DOFS | BRANCH_3_DOFS | BRANCH_4_DOFS
 
 
 class DofList:
@@ -82,10 +77,14 @@ class DofList:
         dofs = self.list_dof[nodes - 1]
         return dofs
 
+    # all nodes have to have the requested dofs
     def get_elem_dof_numbers(self, nodes, mask):
         nodes = np.asarray(nodes)
         dofs = self.list_dof[nodes - 1]
         selected = np.bitwise_and(dofs, mask)
+        assert np.all(selected == selected[0]), (
+            "all nodes need to have the requested dofs"
+        )
         preceding_mask = (selected[0] & ((~selected[0]) + 1)) - 1
         offset = np.bitwise_count(dofs & preceding_mask)
         dof_numbers = self.list_dof_number[nodes - 1]
@@ -95,11 +94,33 @@ class DofList:
             + np.arange(selected[0].bit_count(), dtype=int)
         )
 
-    def get_elem_dof_numbers_flat(self, nodes, mask):
+    def get_elem_dof_numbers_non_contiguous(self, nodes, masks):
         nodes = np.asarray(nodes)
+        dofs = self.list_dof[nodes - 1]
+        selected = np.bitwise_and(dofs[:, None], masks[None, :])
+        assert np.all(selected == selected[None, 0, :])
+        preceding_mask = (selected[0] & ((~selected[0]) + 1)) - 1
+        offset = np.bitwise_count(dofs & preceding_mask)
+        dof_numbers = self.list_dof_number[nodes - 1]
+        return np.hstack(
+            [
+                dof_numbers[:, None]
+                + offset[:, i, None]
+                + np.arange(selected[0, i].bit_count(), dtype=int)
+                for i in range(len(masks))
+            ]
+        )
+
+    # assumption that there are no gaps selected dofs
+    # if node has dofs A, B , C can't get A, C in one query
+    def get_elem_dof_numbers_flat(self, nodes, mask):
+        nodes = np.atleast_1d(np.asarray(nodes))
         dofs = self.list_dof[nodes - 1]
         selected = np.bitwise_and(dofs, mask)
         preceding_mask = (selected & ((~selected) + 1)) - 1
+        # # assert np.all(preceding_mask | selected == dofs & fill_left(mask)), (
+        #     "can't account for gaps in dof numbers"
+        # )
         offset = np.bitwise_count(dofs & preceding_mask)
         dof_numbers = self.list_dof_number[nodes - 1]
         start = dof_numbers + offset
@@ -115,18 +136,9 @@ class DofList:
         else:
             return np.array([], dtype=int)
 
-        # return np(
-        #     dof_numbers[:, None]
-        #     + offset[:, None]
-        #     + np.arange(selected[0].bit_count(), dtype=int)
-        # )
-
     def get_dofs(self, node):
         return self.list_dof[node - 1]
 
-    # def set_dofs(self, node, dofs):
-    #     self.list_dof[node - 1] = dofs
-    #
     def add_dofs(self, nodes, dofs):
         self.list_dof[np.asarray(nodes) - 1] |= dofs
 
@@ -141,8 +153,28 @@ class DofList:
     #
 
 
+def get_bit_length(mask):
+    bits = mask >> 1
+
+    bits |= bits >> 1
+    bits |= bits >> 2
+    bits |= bits >> 4
+    bits |= bits >> 8
+    bits |= bits >> 16
+    bits |= bits >> 32
+
+    return np.bitwise_count(bits) + (mask > 0)
+
+
+def fill_left(mask):
+    following_bit = 1 << get_bit_length(mask)
+    filled = (following_bit & (~following_bit + 1)) - 1
+    return filled
+
+
 IS_2D: Final = DofType.UX | DofType.UY
 IS_2D_HEAVISIDE: Final = DofType.HX | DofType.HY
+IS_2D_LINEAR_HEAVISIDE: Final = DofType.LHX | DofType.LHY
 IS_2D_BRANCH: Final = (
     DofType.B1X
     | DofType.B1Y
@@ -158,6 +190,7 @@ IS_2D_ALL = IS_2D | IS_2D_HEAVISIDE | IS_2D_BRANCH
 
 IS_3D: Final = DofType.UX | DofType.UY | DofType.UZ
 IS_3D_HEAVISIDE: Final = DofType.HX | DofType.HY | DofType.HZ
+IS_3D_LINEAR_HEAVISIDE: Final = DofType.LHX | DofType.LHY | DofType.LHZ
 IS_3D_BRANCH: Final = (
     DofType.B1X
     | DofType.B1Y
@@ -172,4 +205,4 @@ IS_3D_BRANCH: Final = (
     | DofType.B4Y
     | DofType.B4Z
 )
-IS_3D_ALL = IS_3D | IS_3D_HEAVISIDE | IS_3D_BRANCH
+IS_3D_ALL = IS_3D | IS_3D_HEAVISIDE | IS_3D_LINEAR_HEAVISIDE | IS_3D_BRANCH

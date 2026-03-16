@@ -33,7 +33,7 @@ def build_XQuad4n(model, node_stress=None):
     def build_triangles(iter, Ue, nat_x_e, elem_vertices, phi_t):
         for Ni, _ in iter:
             centroid = np.mean(Ni, axis=1)
-            Ni = centroid[:, None] + (Ni - centroid[:, None]) * 0.99999
+            Ni = centroid[:, None] + (Ni - centroid[:, None]) * 0.999
             sub_nat_x_e = Ni.T @ nat_x_e
             sub_shape_functions = elem.shape_functions2(
                 sub_nat_x_e[:, 0], sub_nat_x_e[:, 1]
@@ -117,6 +117,7 @@ def build_XQuad4n(model, node_stress=None):
         material = model.materials[mat_id - 1][1]
         real = model.reals[real_id - 1][1]
         phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
+        # print("phi_n", phi_n)
         in_range = model.in_range[elem_nodes - 1]
 
         elem = XQuad4n(
@@ -134,14 +135,20 @@ def build_XQuad4n(model, node_stress=None):
 
         Nc1, Nc2 = elem._cal_intersections()
         if partial_cut:
-            tip1 = np.linalg.solve(
-                np.array([phi_t[:-1], phi_n[:-1], [1, 1, 1]]),
-                np.array([0, 0, 1]),
-            )
-            tip2 = np.linalg.solve(
-                np.array([phi_t[[0, 2, 3]], phi_n[[0, 2, 3]], [1, 1, 1]]),
-                np.array([0, 0, 1]),
-            )
+            # tip1 = np.linalg.solve(
+            #     np.array([phi_t[:-1], phi_n[:-1], [1, 1, 1]]),
+            #     np.array([0, 0, 1]),
+            # )
+            # tip2 = np.linalg.solve(
+            #     np.array([phi_t[[0, 2, 3]], phi_n[[0, 2, 3]], [1, 1, 1]]),
+            #     np.array([0, 0, 1]),
+            # )
+            xi_tip, eta_tip = elem._cal_tip_nat_coords()
+            tri1_coords = np.array([[-1, 1, 1], [-1, -1, 1], [1, 1, 1]])
+            tip1 = np.linalg.solve(tri1_coords, [xi_tip, eta_tip, 1.0])
+
+            tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
+            tip2 = np.linalg.solve(tri2_coords, [xi_tip, eta_tip, 1.0])
             iter1 = elem._partial_cut_embedding_iter(Nc1, tip1, range(4))
             iter2 = elem._partial_cut_embedding_iter(Nc2, tip2, range(2, 6))
         else:
@@ -159,12 +166,12 @@ def build_XQuad4n(model, node_stress=None):
     displacements = np.array(displacements).reshape((-1, 2))
     points_ref = np.hstack((points_ref, np.zeros((points_ref.shape[0], 1))))
     displacements = np.hstack((displacements, np.zeros((displacements.shape[0], 1))))
-    stresses = np.concatenate(stresses, axis=0)
+    # stresses = np.concatenate(stresses, axis=0)
     points = points_ref + displacements
     mesh = pv.PolyData(points, faces)
     mesh.point_data["points_ref"] = points_ref
     mesh.point_data["displacement"] = displacements
-    mesh.point_data["stress"] = stresses[:, 1]
+    # mesh.point_data["stress"] = stresses[:, 1]
     return mesh
 
 

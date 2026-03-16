@@ -176,14 +176,25 @@ class XQuad4n(Quad4n):
             rule = rule.copy()
             rule[:, 0:2] = (1 + rule[:, 0:2]) / 2
             rule[:, 2] /= 4
-            tip1 = np.linalg.solve(
-                np.array([self.phi_t[:-1], self.phi_n[:-1], [1, 1, 1]]),
-                np.array([0, 0, 1]),
-            )
-            tip2 = np.linalg.solve(
-                np.array([self.phi_t[[0, 2, 3]], self.phi_n[[0, 2, 3]], [1, 1, 1]]),
-                np.array([0, 0, 1]),
-            )
+            self._cal_tip_nat_coords()
+            xi_tip, eta_tip = self._cal_tip_nat_coords()
+            tri1_coords = np.array([[-1, 1, 1], [-1, -1, 1], [1, 1, 1]])
+            print(xi_tip, eta_tip, tri1_coords)
+            tip1 = np.linalg.solve(tri1_coords, [xi_tip, eta_tip, 1.0])
+            print("tip1", tip1)
+
+            tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
+            tip2 = np.linalg.solve(tri2_coords, [xi_tip, eta_tip, 1.0])
+            print("tip2", tip2)
+            # tip1 = np.linalg.solve(
+            #     np.array([self.phi_t[:-1], self.phi_n[:-1], [1, 1, 1]]),
+            #     np.array([0, 0, 1]),
+            # )
+            # tip2 = np.linalg.solve(
+            #     np.array([self.phi_t[[0, 2, 3]], self.phi_n[[0, 2, 3]], [1, 1, 1]]),
+            #     np.array([0, 0, 1]),
+            # )
+
             self._integrate_partial_cut2(
                 Ke,
                 tip1,
@@ -222,21 +233,42 @@ class XQuad4n(Quad4n):
             np.divide(
                 num,
                 denom,
-                out=np.ones_like(num),
+                out=np.ones_like(num, dtype=float),
                 where=~unsolvable & ~on_crack,
             ),
             0,
             1,
         )
+        [phi1, phi2, phi3, phi4] = self.phi_n
+        A = phi1 - phi2 + phi3 - phi4
+        B = -2.0 * phi1 + phi2 + phi4
+        C = phi1
         num_diag = self.phi_n[0]
         denom_diag = num_diag - self.phi_n[2]
         unsolvable_diag = np.isclose(denom_diag, 0)
-        N1_diag = np.clip(
-            num_diag / denom_diag * ~unsolvable_diag * ~np.isclose(self.phi_n[2], 0),
-            0,
-            1,
+        s_linear = np.divide(
+            num_diag,
+            denom_diag,
+            out=np.ones_like(phi1, dtype=float),
+            where=~unsolvable_diag,
         )
-        N1_diag += unsolvable_diag | np.isclose(self.phi_n[2], 0)
+        discriminant = B**2 - 4 * A * C
+        use_linear = np.isclose(A, 0) | (discriminant < 0)
+        safe_A = np.where(use_linear, 1.0, A)
+        sqrt_disc = np.sqrt(np.maximum(discriminant, 0))
+        root1 = (-B + sqrt_disc) / (2.0 * safe_A)
+        root2 = (-B - sqrt_disc) / (2.0 * safe_A)
+
+        valid_root1 = (root1 >= 0.0) & (root1 <= 1.0)
+        valid_root2 = (root2 >= 0.0) & (root2 <= 1.0)
+
+        s_quad = np.where(valid_root1, root1, np.where(valid_root2, root2, s_linear))
+
+        N1_diag = np.where(use_linear, s_linear, s_quad)
+
+        N1_diag = np.where(unsolvable_diag | np.isclose(phi3, 0), 1.0, N1_diag)
+        N1_diag = np.clip(N1_diag, 0, 1)
+
         Nc1 = np.array(
             [
                 [N1[0], 0, 1 - N1_diag],
@@ -252,6 +284,50 @@ class XQuad4n(Quad4n):
             ]
         )
         return Nc1, Nc2
+
+    def _cal_tip_nat_coords(self):
+        xi, eta = 0.0, 0.0
+        for _ in range(50):
+            N, dN_dxi = super().shape_functions2(xi, eta)
+            N = N[0]
+            dN_dxi = dN_dxi[0]
+            val_t = np.dot(N, self.phi_t)
+            val_n = np.dot(N, self.phi_n)
+            if np.isclose(val_t, 0) and np.isclose(val_n, 0):
+                return xi, eta
+            J = np.array(
+                [
+                    [
+                        np.dot(dN_dxi[0, :], self.phi_t),
+                        np.dot(dN_dxi[1, :], self.phi_t),
+                    ],
+                    [
+                        np.dot(dN_dxi[0, :], self.phi_n),
+                        np.dot(dN_dxi[1, :], self.phi_n),
+                    ],
+                ]
+            )
+            step = np.linalg.solve(J, [-val_t, -val_n])
+            xi += step[0]
+            eta += step[1]
+        raise ValueError("newton iterations didn't converge")
+
+    def _cal_nat_coords(self, points):
+        points = np.atleast_2d(points)
+        xi = np.zeros(points.shape[0])
+        eta = np.zeros_like(xi)
+        x_e = self.node_coords
+        for _ in range(50):
+            N, dN_dxi = super().shape_functions2(xi, eta)
+            dx = N @ x_e - points
+            if np.all(np.isclose(np.sum(dx**2, axis=1), 0.0)):
+                return xi, eta
+            J = dN_dxi @ x_e
+
+            step = np.linalg.solve(J.T, dx)
+            xi += step[:, 0]
+            eta += step[:, 1]
+        raise ValueError("newton iterations didn't converge")
 
     @staticmethod
     def _cut_embedding_iter(Nc, range=range(4)):
@@ -286,7 +362,7 @@ class XQuad4n(Quad4n):
         if self.t_enrich:
             rule, correction = qd.TRI_RULES[10]
         else:
-            rule, correction = qd.TRI_RULES[6]
+            rule, correction = qd.TRI_RULES[3]
         x_e = self.node_coords
         for i in range(4):
             if i != 3:
@@ -327,10 +403,11 @@ class XQuad4n(Quad4n):
                     Ke[begin_tip_dofs:, begin_h_dofs:begin_tip_dofs] += res.T
 
     def _integrate_sub_tri2(self, Ke, Nc, nat_x_e):
+        w_tot = 0
         if self.t_enrich:
             rule, correction = qd.TRI_RULES[10]
         else:
-            rule, correction = qd.TRI_RULES[6]
+            rule, correction = qd.TRI_RULES[3]
         x_e = self.node_coords
         for Ni, detJi in self._cut_embedding_iter(Nc):
             xi = rule[:, 0]
@@ -344,6 +421,7 @@ class XQuad4n(Quad4n):
             dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
             B = cal_B_2d_vec(dN_dxy_sub)
             w_eff = w * correction * detJ * detJi * 4
+            w_tot += w_eff
             Ke += np.sum(
                 B.transpose(0, 2, 1) @ self.C @ B * w_eff[:, None, None], axis=0
             )
@@ -512,19 +590,7 @@ class XQuad4n(Quad4n):
             dN_dxi[1, begin_tip:end_tip] = (term1[:, 1, :] + term2[:, :, 1]).flatten()
         return N, dN_dxi
 
-    def shape_functions2(self, xi, eta):
-        n_points = xi.shape[0]
-        N = np.empty(
-            (n_points, N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN)
-        )
-        dN_dxi = np.empty(
-            (
-                n_points,
-                DOFS,
-                N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN,
-            )
-        )
-        (N[:, :N_FN], dN_dxi[:, :, :N_FN]) = super().shape_functions2(xi, eta)
+    def _cubic_shape_functions(self, xi, eta):
         Q0_xi = (xi - 1) ** 2 * (xi + 2) / 4
         Q1_xi = (2 - xi) * (xi + 1) ** 2 / 4
         Q0_eta = (eta - 1) ** 2 * (eta + 2) / 4
@@ -544,7 +610,93 @@ class XQuad4n(Quad4n):
         row1 = [dQ0_xi * Q0_eta, dQ1_xi * Q0_eta, dQ1_xi * Q1_eta, dQ0_xi * Q1_eta]
         row2 = [Q0_xi * dQ0_eta, Q1_xi * dQ0_eta, Q1_xi * dQ1_eta, Q0_xi * dQ1_eta]
         dQ_dxi = np.stack([row1, row2]).transpose(2, 0, 1)
+        return Q, dQ_dxi
 
+    def nearest_point_on_crack(self, coords):
+        Nc1, Nc2 = self._cal_intersections()
+
+        def project_on_crack(Nc, x_e, coords):
+            cols = np.where(np.sum(np.isclose(Nc, 0.0, 1e-12), axis=0) == 1)[0]
+            if len(cols) == 2:
+                intersections = x_e.T @ Nc[:, cols]
+                v = intersections[:, 1] - intersections[:, 0]
+                w = coords - intersections[:, 0]
+                t = np.clip(np.dot(v, w) / np.linalg.norm(v), 0.0, 1.0)
+                p = intersections[:, 0] + t * v
+                d = np.linalg.norm(p - coords)
+                return p, d
+            return None, np.inf
+
+        touching = np.where(np.isclose(self.phi_n, 0.0, 1e-12))[0]
+        p1, d1 = project_on_crack(Nc1, NAT_1, coords)
+        p2, d2 = project_on_crack(Nc2, NAT_2, coords)
+        if len(touching) == 1:
+            p = self.node_coords[touching[0], :]
+            np.linalg.norm(p - coords)
+        elif len(touching) == 2:
+            nodes = self.node_coords[touching, :]
+            v = nodes[1, :] - nodes[0, :]
+            w = coords - nodes[0, :]
+            t = np.clip(np.dot(v, w) / np.linalg.norm(v), 0.0, 1.0)
+            p = nodes[0, :] + t * v
+            np.linalg.norm(p - coords)
+        elif p1 is not None or p2 is not None:
+            if d1 < d2:
+                p = p1
+            else:
+                p = p2
+        else:
+            return None
+        return p
+
+    def contains_points(self, points):
+        points = np.atleast_2d(points)
+        x_e_1 = self.node_coords
+        x_e_2 = np.empty_like(x_e_1)
+        x_e_2[:-1, :] = x_e_1[1:, :]
+        x_e_2[-1, :] = x_e_1[0, :]
+
+        edges = x_e_2 - x_e_1
+        vec = points[:, None, :] - x_e_1[None, :, :]
+        cross = edges[None, :, 0] * vec[:, :, 1] - edges[None, :, 1] * vec[:, :, 0]
+
+        is_inside = np.all(cross >= -1e-12, axis=1)
+        return is_inside
+
+    def jump_shape_functions(self, xi, eta, tip_coords):
+        n_points = xi.shape[0]
+        N, _ = super().shape_functions2(xi, eta)
+        Q, _ = self._cubic_shape_functions(xi, eta)
+        N_jump = np.empty(
+            (n_points, N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN)
+        )
+        N_jump[:, :N_FN] = 0.0
+        r = np.linalg.norm(N @ self.node_coords - tip_coords)
+        if self.h_enrich:
+            begin_h, end_h = N_FN, N_FN + H_FN
+            N_jump[:, begin_h:end_h] = N[:, :N_FN]
+        if self.t_enrich:
+            sqrt_r = np.sqrt(r)
+            begin_tip = N_FN + int(self.h_enrich) * H_FN
+            end_tip = begin_tip + TIP_FN
+            N_jump[:, begin_tip:end_tip] = 0.0
+            N_jump[:, begin_tip::4] = 2 * sqrt_r[:, None] * Q
+        return N_jump, r
+
+    def shape_functions2(self, xi, eta):
+        n_points = xi.shape[0]
+        N = np.empty(
+            (n_points, N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN)
+        )
+        dN_dxi = np.empty(
+            (
+                n_points,
+                DOFS,
+                N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN,
+            )
+        )
+        (N[:, :N_FN], dN_dxi[:, :, :N_FN]) = super().shape_functions2(xi, eta)
+        Q, dQ_dxi = self._cubic_shape_functions(xi, eta)
         phi_n = np.sum(self.phi_n * N[:, :N_FN], axis=1)
         phi_t = np.sum(self.phi_t * N[:, :N_FN], axis=1)
         if self.h_enrich:
@@ -626,117 +778,6 @@ class XQuad4n(Quad4n):
                 term1[:, :, 1, :] + term2[:, 1, :, :] + term3[:, 1, :, :]
             ).reshape(-1, TIP_FN)
         return N, dN_dxi
-
-    # def shape_functions2(self, xi, eta):
-    #     n_points = xi.shape[0]
-    #     N = np.empty(
-    #         (n_points, N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN)
-    #     )
-    #     dN_dxi = np.empty(
-    #         (
-    #             n_points,
-    #             DOFS,
-    #             N_FN + int(self.h_enrich) * H_FN + int(self.t_enrich) * TIP_FN,
-    #         )
-    #     )
-    #     (N[:, :N_FN], dN_dxi[:, :, :N_FN]) = super().shape_functions2(xi, eta)
-    #     phi_n = np.sum(self.phi_n * N[:, :N_FN], axis=1)
-    #     phi_t = np.sum(self.phi_t * N[:, :N_FN], axis=1)
-    #     if self.h_enrich:
-    #         h_shifted = (np.sign(phi_n)[:, None] - np.sign(self.phi_n)) / 2
-    #         begin_h, end_h = N_FN, N_FN + H_FN
-    #         N[:, begin_h:end_h] = h_shifted * N[:, :N_FN]
-    #         dN_dxi[:, :, begin_h:end_h] = h_shifted[:, None, :] * dN_dxi[:, :, :N_FN]
-    #     if self.t_enrich:
-    #         r = np.sqrt(phi_n**2 + phi_t**2)
-    #         r = np.maximum(r, 1e-14)  # avoid divide by zero
-    #         sqrt_r = np.sqrt(r)
-    #         sqrt_r_i = (self.phi_n**2 + self.phi_t**2) ** (1 / 4)
-    #         theta = np.atan2(phi_n, phi_t)
-    #         theta_i = np.atan2(self.phi_n, self.phi_t)
-    #         dphi_n_dxi = np.sum(self.phi_n * dN_dxi[:, :, :N_FN], axis=2)
-    #         dphi_t_dxi = np.sum(self.phi_t * dN_dxi[:, :, :N_FN], axis=2)
-    #         # sin(theta) = phi_n / r, cos(theta) = phi_t / r
-    #         dr_dxi = (
-    #             1
-    #             / r[:, None]
-    #             * (phi_n[:, None] * dphi_n_dxi + phi_t[:, None] * dphi_t_dxi)
-    #         )  # = np.sin(theta) * dphi_n_dxi - np.cos(theta) * dphi_t_dxi
-    #         dtheta_dxi = (dphi_n_dxi * phi_t[:, None] - phi_n[:, None] * dphi_t_dxi) / (
-    #             phi_t**2 + phi_n**2
-    #         )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
-    #         bf_orig = branch_functions(sqrt_r, theta)  # (4, n)
-    #         bf_i_orig = branch_functions(sqrt_r_i, theta_i)  # (4, N_NODES)
-    #         bf_shifted = bf_orig[:, None, :] - bf_i_orig[:, :, None]
-    #         bf = bf_orig.T
-    #         c23 = -2.0 * np.cos(theta_i) * np.sin(theta_i / 2) ** 2
-    #         c13 = (1.0 + np.cos(theta_i)) * np.sin(theta_i)
-    #         c34 = np.zeros_like(theta_i)
-    #         mask_34 = ~(
-    #             np.isclose(np.abs(theta_i), np.pi / 3, atol=0.05)
-    #             | np.isclose(np.abs(theta_i), np.pi, atol=0.05)
-    #         )
-    #         theta_i_mask = theta_i[mask_34]
-    #         c34[mask_34] = -(
-    #             7 * np.sin(theta_i_mask)
-    #             + 11 * np.sin(2 * theta_i_mask)
-    #             + 65 * np.sin(3 * theta_i_mask)
-    #         ) / (36 * (1 + np.cos(3 * theta_i_mask)))
-    #         c24 = (1 - np.cos(theta_i)) * np.sin(theta_i)
-    #         c14 = 2 * np.cos(theta_i / 2) ** 2 * np.cos(theta_i)
-    #         bf_shifted[2, :, :] -= (
-    #             c13[:, None] * bf_shifted[0, :, :] + c23[:, None] * bf_shifted[1, :, :]
-    #         )
-    #         bf_shifted[3, :, :] -= (
-    #             c14[:, None] * bf_shifted[0, :, :]
-    #             + c24[:, None] * bf_shifted[1, :, :]
-    #             + c34[:, None] * bf_shifted[2, :, :]
-    #         )
-    #         bf_shifted = bf_shifted.transpose(2, 1, 0)
-    #
-    #         dbf_dxi = 1 / (2 * sqrt_r[:, None, None]) * dr_dxi.reshape((-1, 2, 1)) * (
-    #             bf / sqrt_r[:, None]
-    #         )[:, None, :] + sqrt_r[:, None, None] * np.array(
-    #             [
-    #                 np.cos(theta[:, None] / 2) * dtheta_dxi / 2,
-    #                 -np.sin(theta[:, None] / 2) * dtheta_dxi / 2,
-    #                 np.cos(theta[:, None] / 2) * dtheta_dxi / 2 * np.sin(theta[:, None])
-    #                 + np.sin(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
-    #                 -np.sin(theta[:, None] / 2)
-    #                 * dtheta_dxi
-    #                 / 2
-    #                 * np.sin(theta[:, None])
-    #                 + np.cos(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
-    #             ]
-    #         ).transpose(1, 2, 0)
-    #         # shifter = bf_i[None, :, :]
-    #         # interpolant = np.sum(shifter * N[:, :N_FN, None], axis=1)
-    #         begin_tip = N_FN + int(self.h_enrich) * H_FN
-    #         end_tip = begin_tip + TIP_FN
-    #
-    #         N[:, begin_tip:end_tip] = (bf_shifted * N[:, :N_FN, None]).reshape(
-    #             -1, TIP_FN
-    #         )
-    #         term1 = dbf_dxi[:, None, :, :] * N[:, :N_FN, None, None]  # (n, 4, 2, 4)
-    #         term1[:, :, :, 2] -= (
-    #             c13[None, :, None] * term1[:, :, :, 0]
-    #             + c23[None, :, None] * term1[:, :, :, 1]
-    #         )
-    #         term1[:, :, :, 3] -= (
-    #             c14[None, :, None] * term1[:, :, :, 0]
-    #             + c24[None, :, None] * term1[:, :, :, 1]
-    #             + c34[None, :, None] * term1[:, :, :, 2]
-    #         )
-    #         term2 = (
-    #             bf_shifted[:, None, :, :] * dN_dxi[:, :, :N_FN, None]
-    #         )  # (n, 2, 4, 4)
-    #         dN_dxi[:, 0, begin_tip:end_tip] = (
-    #             term1[:, :, 0, :] + term2[:, 0, :, :]
-    #         ).reshape(-1, TIP_FN)
-    #         dN_dxi[:, 1, begin_tip:end_tip] = (
-    #             term1[:, :, 1, :] + term2[:, 1, :, :]
-    #         ).reshape(-1, TIP_FN)
-    #     return N, dN_dxi
 
     def cal_stresses(self, xi, eta, Ue):
         Ue = np.asarray(Ue, dtype=float).ravel()

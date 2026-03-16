@@ -95,6 +95,8 @@ class Quad4n:
         return N, dN_dxi
 
     def shape_functions2(self, xi, eta):
+        xi = np.atleast_1d(np.asarray(xi))
+        eta = np.atleast_1d(np.asarray(eta))
         xi_min = 1 - xi
         xi_plus = 1 + xi
         eta_min = 1 - eta

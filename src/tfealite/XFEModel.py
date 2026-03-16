@@ -65,6 +65,15 @@ class XFEModel(FEModel):
                             filtered = nodes[np.argwhere(np.isclose(phi_n, 0))]
                         else:
                             filtered = nodes
+                        phi_n, phi_t = ls.get(nodes, None)
+                        # print(
+                        #     "id",
+                        #     id,
+                        #     "phi_n",
+                        #     np.array_repr(phi_n),
+                        #     "phi_t",
+                        #     np.array_repr(phi_t),
+                        # )
 
                         self.list_dof.add_dofs(filtered, dofs.IS_2D_HEAVISIDE)
                         if self.tip_enrichment:
@@ -72,6 +81,7 @@ class XFEModel(FEModel):
                                 elem, self.geometrical_range
                             )
                             if is_in_range:
+                                # print("tip_enriched")
                                 self.tip[nodes - 1] = tip
                                 self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
                                 if self.corrected:
@@ -117,4 +127,15 @@ class XFEModel(FEModel):
     def insert_crack_segment(self, p1: NDArray, p2: NDArray, embedded):
         ls = LevelSet()
         ls.gen_from_line_segment(self.nodes, p1, p2, embedded=embedded)
+        self.level_sets.append(ls)
+
+    def insert_crack_spline(self, bspline, embedded):
+        ls = LevelSet()
+        ls.gen_from_bspline(
+            self.nodes,
+            bspline,
+            embedded=embedded,
+            h=0.05,
+            geometrical_range=1.5 * self.geometrical_range,
+        )
         self.level_sets.append(ls)

@@ -301,7 +301,7 @@ def elem_func(
     return elem
 
 
-n = np.arange(11, 50, 2)
+n = np.arange(11, 200, 2)
 conditioning_no_orth = []
 conditioning = []
 conditioning_fem = []
@@ -327,9 +327,9 @@ for i in n:
     #     1 + np.arange(model.n_nodes), tf.DofType.HX | tf.DofType.HY
     # )
     model.cal_global_matrices(tf.XQuad4n)
-    c0 = scaled_condition_number(model.Kg)
+    # c0 = scaled_condition_number(model.Kg)
     c1 = scaled_condition_number(model.ortho_T.T @ model.Kg @ model.ortho_T)
-    conditioning_no_orth.append(c0)
+    # conditioning_no_orth.append(c0)
     conditioning.append(c1)
     model = tf.FEModel(nodes, elements, materials, reals)
     model.gen_list_dof(dof_per_node=tf.IS_2D)
@@ -339,7 +339,7 @@ for i in n:
 
 
 plt.figure()
-plt.plot(n, conditioning_no_orth, label="no orth")
+# plt.plot(n, conditioning_no_orth, label="no orth")
 plt.plot(n, conditioning, label="orth")
 plt.plot(n, conditioning_fem, label="fem")
 plt.yscale("log", base=10)
