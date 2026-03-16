@@ -209,14 +209,19 @@ def quasi_gram_schmidt(model, Kg):
     data_list = []
     processed_dofs = np.zeros(Kg.shape[0], dtype=bool)
 
-    def orthogonalize_at_node_batched(node_numbers):
+    def orthogonalize_at_node_batched(node_numbers, contiguous=False):
         Kg_local = np.zeros(
             (node_numbers.shape[0], node_numbers.shape[1], node_numbers.shape[1])
         )
-        for n, numbers in enumerate(node_numbers):
-            Kg_local[n] = Kg[
-                numbers[0] : numbers[-1] + 1, numbers[0] : numbers[-1] + 1
-            ].toarray()
+        if contiguous:
+            for n, numbers in enumerate(node_numbers):
+                Kg_local[n] = Kg[
+                    numbers[0] : numbers[-1] + 1, numbers[0] : numbers[-1] + 1
+                ].toarray()
+        else:
+            for n, numbers in enumerate(node_numbers):
+                Kg_local[n] = Kg[numbers, :][:, numbers].toarray()
+
         T_local = np.tile(np.eye(node_numbers.shape[1]), (Kg_local.shape[0], 1, 1))
 
         for nj in range(n_dof_per_node, node_numbers.shape[1], n_dof_per_node):
@@ -265,6 +270,7 @@ def quasi_gram_schmidt(model, Kg):
         )[0],
     ]
     dof_types = [BRANCH_DOFS, HEAVISIDE_DOFS | BRANCH_DOFS]
+    contiguous = [True, True]
 
     dof_numbers = [
         model.list_dof.get_elem_dof_numbers_flat(i, d).reshape((len(i), -1))
@@ -273,10 +279,10 @@ def quasi_gram_schmidt(model, Kg):
     ]
 
     batch_size = 1000
-    for dn in dof_numbers:
+    for cont, dn in zip(contiguous, dof_numbers):
         n_nodes = len(dn)
         for i0 in range(0, n_nodes, batch_size):
-            orthogonalize_at_node_batched(dn[i0 : i0 + batch_size])
+            orthogonalize_at_node_batched(dn[i0 : i0 + batch_size], cont)
 
     unprocessed_dofs = np.where(~processed_dofs)[0]
     row_list.append(unprocessed_dofs)
