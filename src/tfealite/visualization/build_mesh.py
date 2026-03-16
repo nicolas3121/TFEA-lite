@@ -35,7 +35,7 @@ def build_XQuad4n(model, node_stress=None):
             centroid = np.mean(Ni, axis=1)
             Ni = centroid[:, None] + (Ni - centroid[:, None]) * 0.999
             sub_nat_x_e = Ni.T @ nat_x_e
-            sub_shape_functions = elem.shape_functions2(
+            sub_shape_functions = elem.shape_functions(
                 sub_nat_x_e[:, 0], sub_nat_x_e[:, 1]
             )[0]
             sub_phi_t = np.sum(sub_shape_functions[:, :4] * phi_t[None, :], axis=1)
