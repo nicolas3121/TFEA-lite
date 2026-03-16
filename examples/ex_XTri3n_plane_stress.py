@@ -1,11 +1,13 @@
 import tfealite as tf
 import numpy as np
 
-nodes, elements = tf.gen_rect_Tri3n(1, 1, 2, 2)
+nodes, elements = tf.gen_rect_Tri3n(1, 1, 11, 11)
 materials = [[1, {"E": 1, "nu": 0.33, "rho": 7850}]]
 reals = [[1, {"t": 1}]]
-model = tf.XFEModel(nodes, elements, materials, reals)
-model.insert_crack_segment(np.array([0, 0.25]), np.array([0.51, 0.25]))
+model = tf.XFEModel(
+    nodes, elements, materials, reals, tip_enrichment=True, geometrical_range=0.0
+)
+model.insert_crack_segment(np.array([0, 0.25]), np.array([0.51, 0.25]), embedded=False)
 
 model.gen_list_dof(dof_per_node=tf.IS_2D)
 model.cal_global_matrices(tf.XTri3n)

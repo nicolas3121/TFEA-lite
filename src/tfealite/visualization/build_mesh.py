@@ -1,6 +1,7 @@
 import numpy as np
 import pyvista as pv
 from ..core.dofs import DofType, BASE_DOFS, HEAVISIDE_DOFS, BRANCH_DOFS
+from ..elements.utils import cut_embedding_tri_iter, partial_cut_embedding_tri_iter
 from ..elements.XQuad4n import XQuad4n
 from ..core.level_set import CutType
 import itertools
@@ -149,11 +150,11 @@ def build_XQuad4n(model, node_stress=None):
 
             tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
             tip2 = np.linalg.solve(tri2_coords, [xi_tip, eta_tip, 1.0])
-            iter1 = elem._partial_cut_embedding_iter(Nc1, tip1, range(4))
-            iter2 = elem._partial_cut_embedding_iter(Nc2, tip2, range(2, 6))
+            iter1 = partial_cut_embedding_tri_iter(Nc1, tip1, range(4))
+            iter2 = partial_cut_embedding_tri_iter(Nc2, tip2, range(2, 6))
         else:
-            iter1 = elem._cut_embedding_iter(Nc1)
-            iter2 = elem._cut_embedding_iter(Nc2)
+            iter1 = cut_embedding_tri_iter(Nc1)
+            iter2 = cut_embedding_tri_iter(Nc2)
         # print(len(phi_t))
         build_triangles(
             iter1, Ue, np.array([[-1, -1], [1, -1], [1, 1]]), elem_vertices, phi_t
