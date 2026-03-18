@@ -1,9 +1,11 @@
-import numpy as np
-from numpy.typing import NDArray
 from enum import Enum, auto
 from typing import Tuple
-from scipy.spatial import KDTree
+
+import numpy as np
+from numpy.typing import NDArray
 from scipy.integrate import solve_ivp
+from scipy.interpolate import BSpline, splprep
+from scipy.spatial import KDTree
 
 
 class CutType(Enum):
@@ -14,11 +16,13 @@ class CutType(Enum):
 
 class LevelSet:
     def __init__(self):
+        self.embedded = None
         self.phi_n = None
         self.phi_t = None
         self.phi_t2 = None
         self.mesh_tree = None
         self.bspline = None
+        self.dbspline = None
         self.t = None
         self.t2 = None
 
@@ -34,8 +38,17 @@ class LevelSet:
 
         phi_t1 = np.sum((coordinates - p2) * t2, axis=1)
         phi_t2 = np.sum((coordinates - p1) * t1, axis=1)
+
+        pts = np.linspace(p1, p2, 4).T
+        tck, u = splprep(pts, s=0, k=3)
+        bspline = BSpline(tck[0], np.transpose(tck[1]), tck[2])
+        self.bspline = bspline
+        self.dbspline = bspline.derivative()
+        self.ddbspline = bspline.derivative(nu=2)
+
         self.phi_n = phi_n
         self.phi_t = phi_t1
+        self.embedded = embedded
         if embedded:
             self.phi_t2 = phi_t2
 
@@ -55,7 +68,9 @@ class LevelSet:
         self.mesh_tree = KDTree(coordinates)
         self.bspline = bspline
         dbspline = bspline.derivative(1)
+        self.dbspline = dbspline
         ddbspline = bspline.derivative(2)
+        self.ddbspline = bspline.derivative(2)
 
         t2, t1 = bspline(np.array([0.0, 1.0]))
         geometrical_range2 = 0.0
@@ -149,6 +164,7 @@ class LevelSet:
             cal_near_tip(t2, 0, 1, indices_near_tip2, phi_t2)
             self.phi_t2 = phi_t2
 
+        self.embedded = embedded
         self.phi_n = phi_n
         self.phi_t = phi_t
         self.t = t1

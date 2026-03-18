@@ -243,9 +243,9 @@ class XQuad4n(Quad4n):
                 return xi, eta
             J = dN_dxi @ x_e
 
-            step = np.linalg.solve(J.T, dx)
-            xi += step[:, 0]
-            eta += step[:, 1]
+            step = np.linalg.solve(J.transpose(0, 2, 1), dx[:, :, None])
+            xi -= step[:, 0, 0]
+            eta -= step[:, 1, 0]
         raise ValueError("newton iterations didn't converge")
 
     def _integrate_sub_tri(self, Ke, Nc, nat_x_e):
@@ -370,23 +370,23 @@ class XQuad4n(Quad4n):
                 intersections = x_e.T @ Nc[:, cols]
                 v = intersections[:, 1] - intersections[:, 0]
                 w = coords - intersections[:, 0]
-                t = np.clip(np.dot(v, w) / np.linalg.norm(v), 0.0, 1.0)
+                t = np.clip(np.dot(v, w) / np.dot(v, v), 0.0, 1.0)
                 p = intersections[:, 0] + t * v
                 d = np.linalg.norm(p - coords)
                 return p, d
             return None, np.inf
 
         touching = np.where(np.isclose(self.phi_n, 0.0, 1e-12))[0]
-        p1, d1 = project_on_crack(Nc1, self.NAT_1, coords)
-        p2, d2 = project_on_crack(Nc2, self.NAT_2, coords)
+        p1, d1 = project_on_crack(Nc1, self.node_coords[[0, 1, 2], :], coords)
+        p2, d2 = project_on_crack(Nc2, self.node_coords[[0, 2, 3], :], coords)
         if len(touching) == 1:
             p = self.node_coords[touching[0], :]
-            np.linalg.norm(p - coords)
+            # np.linalg.norm(p - coords)
         elif len(touching) == 2:
             nodes = self.node_coords[touching, :]
             v = nodes[1, :] - nodes[0, :]
             w = coords - nodes[0, :]
-            t = np.clip(np.dot(v, w) / np.linalg.norm(v), 0.0, 1.0)
+            t = np.clip(np.dot(v, w) / np.dot(v, v), 0.0, 1.0)
             p = nodes[0, :] + t * v
             np.linalg.norm(p - coords)
         elif p1 is not None or p2 is not None:
@@ -397,20 +397,6 @@ class XQuad4n(Quad4n):
         else:
             return None
         return p
-
-    def contains_points(self, points):
-        points = np.atleast_2d(points)
-        x_e_1 = self.node_coords
-        x_e_2 = np.empty_like(x_e_1)
-        x_e_2[:-1, :] = x_e_1[1:, :]
-        x_e_2[-1, :] = x_e_1[0, :]
-
-        edges = x_e_2 - x_e_1
-        vec = points[:, None, :] - x_e_1[None, :, :]
-        cross = edges[None, :, 0] * vec[:, :, 1] - edges[None, :, 1] * vec[:, :, 0]
-
-        is_inside = np.all(cross >= -1e-12, axis=1)
-        return is_inside
 
     def jump_shape_functions(self, xi, eta, tip_coords):
         return jump_shape_functions(
