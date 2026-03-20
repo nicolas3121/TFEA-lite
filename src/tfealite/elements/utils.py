@@ -34,6 +34,70 @@ def cal_B_2d_vec(dN_dxy):
     return B
 
 
+def cal_B_3d_vec(dN_dxy):
+    DOFS: Final = 2
+    B = np.zeros((dN_dxy.shape[0], 6, DOFS * dN_dxy.shape[2]))
+    B[:, 0, ::DOFS] = dN_dxy[:, 0, :]
+    B[:, 1, 1::DOFS] = dN_dxy[:, 1, :]
+    B[:, 2, 2::DOFS] = dN_dxy[:, 2, :]
+    B[:, 3, ::DOFS] = dN_dxy[:, 1, :]
+    B[:, 3, 1::DOFS] = dN_dxy[:, 0, :]
+    B[:, 4, ::DOFS] = dN_dxy[:, 2, :]
+    B[:, 4, 2::DOFS] = dN_dxy[:, 0, :]
+    B[:, 5, 1::DOFS] = dN_dxy[:, 2, :]
+    B[:, 4, 2::DOFS] = dN_dxy[:, 1, :]
+    return B
+
+
+def cut_embedding_tetr_iter(Nc, kappa, range=range(12)):
+    eye = np.eye(4)
+    for i in range:
+        Ni = np.empty((4, 4))
+        if i < 8:
+            if i < 4:
+                Ni[:, i] = eye[:, i]
+            else:
+                i -= 4
+                Ni[:, i] = kappa
+            Ni[:, (i + 1) % 4] = Nc[:, i + (i == 3)]
+            Ni[:, (i + 2) % 4] = Nc[:, 3 + 2 * (i % 2)]
+            Ni[:, (i + 3) % 4] = Nc[:, (i + 4) % 5]
+        else:
+            i -= 8
+            Ni[:, i] = kappa
+            Ni[:, (i + 1) % 4] = Nc[:, i + (i == 3)]
+            Ni[:, (i + 2) % 4] = Nc[:, (i + 1) % 4 + (i == 2)]
+            Ni[:, (i + 3) % 4] = Nc[:, (i + 4) % 5]
+        detJi = np.linalg.det(Ni)
+        if not np.isclose(detJi, 0.0):
+            yield Ni, detJi
+
+
+def partial_cut_embedding_tetr_iter(Nc, tip, range=range(17)):
+    eye = np.eye(4)
+    Ni = None
+    for k in range:
+        if k % 4 == 0 or Ni is None:
+            Ni = np.empty((4, 4, 4))
+            r = k // 4
+            g, i, j = (r + 1) % 4, (r + 2) % 4, (r + 3) % 4
+            Ni[:, :, r] = eye[None, :, r]
+            Ni[0, :, [i, j, g]] = tip[:, [i, j, g]]
+            Ni[1, :, [g, i]] = tip[:, [i, g]]
+            Ni[1, :, j] = Nc[:, (r + 4) % 5]
+            Ni[2, :, [g, i]] = tip[:, [g, j]]
+            Ni[2, :, j] = Nc[:, 3 + 2 * (r % 2)]
+            Ni[3, :, [g, i]] = tip[:, [i, j]]
+            Ni[3, :, j] = Nc[:, r + (r == 3)]
+        if k == 16:
+            Nik = tip.copy()
+        else:
+            Nik = Ni[k // 4, :, :].copy()
+        detJik = np.linalg.det(Nik)
+        if not np.isclose(detJik, 0.0):
+            yield Nik, detJik
+
+
 def cut_embedding_tri_iter(Nc, range=range(4)):
     for i in range:
         if i != 3:

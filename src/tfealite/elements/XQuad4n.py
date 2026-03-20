@@ -17,7 +17,7 @@ from .utils import (
 class XQuad4n(Quad4n):
     NODES: Final = 4
     DOFS: Final = 2
-    BRANCH_FN: Final = 4  # branch functions
+    BRANCH_FN: Final = 4
     N_FN: Final = NODES
     H_FN: Final = NODES
     LH_FN: Final = 2 * NODES
