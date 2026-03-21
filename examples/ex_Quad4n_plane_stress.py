@@ -27,10 +27,15 @@ def sel_condition(x, y, z):
 
 
 def force_expression(x, y, z):
-    return 0.0, np.sin(np.pi * x / 1.0), 0.0
+    return 0.0, 20 * np.sin(2 * np.pi * x / 1.0), 0.0
 
 
-model.gen_nodal_forces(sel_condition, force_expression)
+# def force_expression(x, y, z):
+#     # return 0.0, 20, 0.0
+
+
+# model.gen_nodal_forces(sel_condition, force_expression)
+model.gen_surface_tractions(sel_condition, force_expression, tf.Quad4n, 10)
 
 # %% Solve
 model.solve_static()

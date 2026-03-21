@@ -67,6 +67,17 @@ class DuffySinh:
         return np.asarray([xi, eta, j_sinh])
 
 
+def generate_bar_rules(max_order):
+    rules = {}
+    for order in range(1, max_order + 1):
+        xi, weights = np.polynomial.legendre.leggauss(order)
+        rule_matrix = np.column_stack((xi, weights))
+        rules[order] = (rule_matrix, 1.0)
+    return rules
+
+
+BAR_RULES = generate_bar_rules(10)
+
 TRI_RULES = {
     1: (np.array([[1.0 / 3.0, 1.0 / 3.0, 0.5]]), 1.0),
     2: (

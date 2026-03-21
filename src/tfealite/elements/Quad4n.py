@@ -1,6 +1,6 @@
 import numpy as np
 from .utils import cal_B_2d_vec
-from ..core.quadratures import QUAD_RULES
+from ..core.quadratures import QUAD_RULES, BAR_RULES
 
 
 class Quad4n:
@@ -35,7 +35,7 @@ class Quad4n:
         Ke = np.sum((B.transpose(0, 2, 1) @ self.C @ B) * w_eff[:, None, None], axis=0)
         if eval_mass:
             rho_t = self.rho
-            N_2d = np.empty((xi.shape[0], 2, 8))
+            N_2d = np.zeros((xi.shape[0], 2, 8))
             N_2d[:, 0, ::2] = N[:, :]
             N_2d[:, 1, 1::2] = N[:, :]
             Me = np.sum(
@@ -43,6 +43,58 @@ class Quad4n:
             )
             return Me, Ke
         return Ke
+
+    @staticmethod
+    def cal_traction_loads(
+        node_coords, node_on_boundary, traction_expression, real, deg
+    ):
+        def shape_functions(xi, eta):
+            xi_min = 1 - xi
+            xi_plus = 1 + xi
+            eta_min = 1 - eta
+            eta_plus = 1 + eta
+            N = (
+                0.25
+                * np.array(
+                    [
+                        xi_min * eta_min,
+                        xi_plus * eta_min,
+                        xi_plus * eta_plus,
+                        xi_min * eta_plus,
+                    ]
+                ).T
+            )
+            return N
+
+        Fe = np.zeros(8)
+        rule, correction = BAR_RULES[deg]
+        edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+        selector = [0, 1, 0, 1]
+        nat_edge = [-1, 1, 1, -1]
+        nat_2 = np.empty_like(rule[:, 0])
+        for (n1, n2), s, n in zip(edges, selector, nat_edge):
+            if node_on_boundary[n1] and node_on_boundary[n2]:
+                nat_2.fill(n)
+                if s == 0:
+                    xi = rule[:, 0]
+                    eta = nat_2
+                else:
+                    eta = rule[:, 0]
+                    xi = nat_2
+                N = shape_functions(xi, eta)
+                coordinates = N[:, [n1, n2]] @ node_coords[[n1, n2], :]
+                t_x, t_y, _ = traction_expression(
+                    coordinates[:, 0], coordinates[:, 1], 0
+                )
+                L = np.linalg.norm(node_coords[n1, :] - node_coords[n2, :])
+                w_eff = rule[:, 1] * L * real["t"] * correction / 2
+                Fe[::2] += np.sum(
+                    N * np.atleast_1d(t_x)[:, None] * w_eff[:, None], axis=0
+                )
+                Fe[1::2] += np.sum(
+                    N * np.atleast_1d(t_y)[:, None] * w_eff[:, None], axis=0
+                )
+        return Fe
 
     def shape_functions(self, xi, eta):
         xi = np.atleast_1d(np.asarray(xi))
