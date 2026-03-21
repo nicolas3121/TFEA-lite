@@ -240,7 +240,7 @@ def test_edge_cut_XQuad4n():
     model = tf.XFEModel(nodes, elements, materials, reals, tip_enrichment=False)
 
     model.insert_crack_segment(
-        np.array([-0.1, 0.5]), np.array([1.1, 0.5]), embedded=True
+        np.array([-0.1, 0.5]), np.array([1.1, 0.5]), embedded=False
     )
     # print(model.level_sets)
 

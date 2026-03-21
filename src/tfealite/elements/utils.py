@@ -146,7 +146,7 @@ def jump_shape_functions(elem, shape_fn, pu_fn, xi, eta, tip_coords):
         begin_tip = elem.N_FN + int(elem.h_enrich) * elem.H_FN
         end_tip = begin_tip + elem.TIP_FN
         N_jump[:, begin_tip:end_tip] = 0.0
-        N_jump[:, begin_tip::4] = 2 * sqrt_r[:, None] * ramp * Q
+        N_jump[:, begin_tip::4] = 2 * sqrt_r[:, None] * ramp[:, None] * Q
     return N_jump, r
 
 
