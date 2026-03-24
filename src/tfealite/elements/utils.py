@@ -161,7 +161,7 @@ def contains_points(node_coords, points):
     vec = points[:, None, :] - x_e_1[None, :, :]
     cross = edges[None, :, 0] * vec[:, :, 1] - edges[None, :, 1] * vec[:, :, 0]
 
-    is_inside = np.all(cross >= -1e-12, axis=1)
+    is_inside = np.all(cross >= 0.0, axis=1)
     return is_inside
 
 
@@ -267,44 +267,46 @@ def enriched_shape_functions(elem, shape_fn, pu_fn, xi, eta):
                 + np.cos(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
             ]
         ).transpose(1, 2, 0)
-        shifter = bf_i[None, :, :]
-        interpolant = np.sum(shifter * N[:, : elem.N_FN, None], axis=1)
-        begin_tip = elem.N_FN + int(elem.h_enrich) * elem.H_FN
-        end_tip = begin_tip + elem.TIP_FN
-        bf_shifted = bf - interpolant
+
         ramp = np.sum(N[:, np.where(elem.in_range)[0]], axis=1)
         dramp_dxi = np.sum(dN_dxi[:, :, np.where(elem.in_range)[0]], axis=2)
 
-        N[:, begin_tip:end_tip] = (
-            bf_shifted[:, None, :] * ramp[:, None, None] * Q[:, :, None]
-        ).reshape(-1, elem.TIP_FN)
+        ramped_bf = bf * ramp[:, None]
 
-        term1 = (
-            (
-                dbf_dxi
-                - np.sum(
-                    shifter[:, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
-                )
-            )[:, None, :, :]  # (n, 1, 2, 4)
-            * ramp[:, None, None, None]  # (n)
-            * Q[:, :, None, None]  # (n, NODES, 1, 1)
-        )  # (n, NODES, 2, 4)
+        ramp_i = elem.in_range.astype(float)
+        ramped_shifter = bf_i * ramp_i[:, None]
 
-        term2 = (
-            bf_shifted[:, None, None, :]
-            * dramp_dxi[:, :, None, None]
-            * Q[:, None, :, None]
-        )  # (n, 2, NODES, 4)
+        interpolant = np.sum(
+            ramped_shifter[None, :, :] * N[:, : elem.N_FN, None], axis=1
+        )
 
-        term3 = (
-            bf_shifted[:, None, None, :]  # (n, 1, 1, 4)
-            * ramp[:, None, None, None]
-            * dQ_dxi[:, :, :, None]  # (n, 2, NODES, 1)
-        )  # (n, 2, NODES, 4)
+        bf_shifted = ramped_bf - interpolant
+
+        begin_tip = elem.N_FN + int(elem.h_enrich) * elem.H_FN
+        end_tip = begin_tip + elem.TIP_FN
+
+        N[:, begin_tip:end_tip] = (bf_shifted[:, None, :] * Q[:, :, None]).reshape(
+            -1, elem.TIP_FN
+        )
+
+        dramped_bf_dxi = (
+            dramp_dxi[:, :, None] * bf[:, None, :] + ramp[:, None, None] * dbf_dxi
+        )
+
+        dinterpolant_dxi = np.sum(
+            ramped_shifter[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
+        )
+
+        dbf_shifted_dxi = dramped_bf_dxi - dinterpolant_dxi
+
+        term_A = dbf_shifted_dxi[:, None, :, :] * Q[:, :, None, None]
+        term_B = bf_shifted[:, None, None, :] * dQ_dxi[:, :, :, None]
+
         dN_dxi[:, 0, begin_tip:end_tip] = (
-            term1[:, :, 0, :] + term2[:, 0, :, :] + term3[:, 0, :, :]
+            term_A[:, :, 0, :] + term_B[:, 0, :, :]
         ).reshape(-1, elem.TIP_FN)
+
         dN_dxi[:, 1, begin_tip:end_tip] = (
-            term1[:, :, 1, :] + term2[:, 1, :, :] + term3[:, 1, :, :]
+            term_A[:, :, 1, :] + term_B[:, 1, :, :]
         ).reshape(-1, elem.TIP_FN)
     return N, dN_dxi
