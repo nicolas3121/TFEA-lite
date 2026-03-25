@@ -14,6 +14,16 @@ from .utils import (
 )
 
 
+# in crack tip element locaal coordinaten stelsel definieren op basis van level set op tip
+# in plaats van level set te interpoleren rechtstreeks r en theta daarmee berekenen dan niet meer mogelijk dat sign change tegen gekomen wordt door enrichment
+# en perfecte orthogonaliteit van 2 level sets daar binnen element
+# kan in theorie mogelijk iets gelijkaardig doen voor geometrical enrichment elementen maar daar nog niet helemaal zeker
+# voor de intersecties in elke sub triangle de waarde van de level sets berekenen
+# 2de punt als referentie om crack tip coordinate system te definieren is die met phi_n = 0, phi_t < 0
+# indien scheur exact op punt / edge ligt en er is geen ander punt in element dat doorsneden wordt is waarschijnlijk gewoon afgeleide in dat punt --> zoals normaal bepalen
+# voor elementen met geometrical enrichment achter scheur punt die ook heaviside enrichment hebben lineair interpolleren binnen sub driehoek om sign change te vermijden
+
+
 class XQuad4n(Quad4n):
     NODES: Final = 4
     DOFS: Final = 2
@@ -70,6 +80,9 @@ class XQuad4n(Quad4n):
         self.t_enrich = t_enrich
         self.partial_cut = partial_cut
         self.in_range = in_range
+        self.tip_coords = None
+        self.tip_n = None
+        self.tip_t = None
 
     def cal_element_matrices(self, eval_mass=False):
         n = (
@@ -106,13 +119,14 @@ class XQuad4n(Quad4n):
             rule = rule.copy()
             rule[:, 0:2] = (1 + rule[:, 0:2]) / 2
             rule[:, 2] /= 4
-            self._cal_tip_nat_coords()
             xi_tip, eta_tip = self._cal_tip_nat_coords()
             tri1_coords = np.array([[-1, 1, 1], [-1, -1, 1], [1, 1, 1]])
             tip1 = np.linalg.solve(tri1_coords, [xi_tip, eta_tip, 1.0])
 
             tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
             tip2 = np.linalg.solve(tri2_coords, [xi_tip, eta_tip, 1.0])
+
+            self._set_tip_var(xi_tip, eta_tip, Nc1, Nc2)
 
             self._integrate_partial_cut(
                 Ke,
@@ -134,12 +148,62 @@ class XQuad4n(Quad4n):
             )
         elif self.h_enrich:
             assert Nc1 is not None and Nc2 is not None
-            self._integrate_sub_tri(Ke, Nc1, self.NAT_1)
-            self._integrate_sub_tri(Ke, Nc2, self.NAT_2)
+            self._integrate_sub_tri(
+                Ke, Nc1, self.NAT_1, self.phi_n[:-1], self.phi_t[:-1]
+            )
+            self._integrate_sub_tri(
+                Ke, Nc2, self.NAT_2, self.phi_n[[0, 2, 3]], self.phi_t[[0, 2, 3]]
+            )
 
         if eval_mass:
             raise NotImplementedError
         return Ke
+
+    def _set_tip_var(self, xi_tip, eta_tip, Nc1, Nc2):
+        pass
+        phi_n1 = self.phi_n[:-1] @ Nc1[:, :-1]
+        phi_t1 = self.phi_t[:-1] @ Nc1[:, :-1]
+        phi_n2 = self.phi_n[[0, 2, 3]] @ Nc2[:, 1:]
+        phi_t2 = self.phi_t[[0, 2, 3]] @ Nc2[:, 1:]
+        in_sub_1 = np.where(np.isclose(phi_n1, 0.0, atol=1e-12) & (phi_t1 <= 0))[0]
+        in_sub_2 = np.where(np.isclose(phi_n2, 0.0, atol=1e-12) & (phi_t2 <= 0))[0]
+
+        N, dN_dxi = self._base_shape_functions(xi_tip, eta_tip)
+        N, dN_dxi = N[0], dN_dxi[0]
+        tip = self.node_coords.T @ N
+
+        if len(in_sub_1) != 0:
+            origin = self.node_coords[:-1, :].T @ Nc1[:, in_sub_1[0]]
+        else:
+            origin = self.node_coords[[0, 2, 3], :].T @ Nc2[:, 1 + in_sub_2[0]]
+        if not np.allclose(origin, tip, atol=1e-12):
+            t = tip - origin
+        else:
+            in_sub_1_fwd = np.where(
+                np.isclose(phi_n1, 0.0, atol=1e-12) & (phi_t1 >= 0)
+            )[0]
+            in_sub_2_fwd = np.where(
+                np.isclose(phi_n2, 0.0, atol=1e-12) & (phi_t2 >= 0)
+            )[0]
+            if len(in_sub_1_fwd) != 0:
+                origin = self.node_coords[:-1, :].T @ Nc1[:, in_sub_1_fwd[0]]
+            else:
+                origin = self.node_coords[[0, 2, 3], :].T @ Nc2[:, 1 + in_sub_2_fwd[0]]
+            t = origin - tip
+        t = t / np.linalg.norm(t)
+        J = dN_dxi @ self.node_coords
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+        grad_phi_n = dN_dxy @ self.phi_n
+
+        n_candidate_1 = np.array([-t[1], t[0]])
+        n_candidate_2 = np.array([t[1], -t[0]])
+        if np.dot(n_candidate_1, grad_phi_n) > 0:
+            n = n_candidate_1
+        else:
+            n = n_candidate_2
+        self.tip_coords = tip
+        self.tip_n = n
+        self.tip_t = t
 
     def _cal_intersections(self):
         num = np.empty_like(self.phi_n)
@@ -236,10 +300,10 @@ class XQuad4n(Quad4n):
         xi = np.zeros(points.shape[0])
         eta = np.zeros_like(xi)
         x_e = self.node_coords
-        for _ in range(50):
+        for _ in range(100):
             N, dN_dxi = self._base_shape_functions(xi, eta)
             dx = N @ x_e - points
-            if np.all(np.isclose(np.sum(dx**2, axis=1), 0.0)):
+            if np.all(np.isclose(np.sum(dx**2, axis=1), 0.0, atol=1e-15)):
                 return xi, eta
             J = dN_dxi @ x_e
 
@@ -248,7 +312,7 @@ class XQuad4n(Quad4n):
             eta -= step[:, 1, 0]
         raise ValueError("newton iterations didn't converge")
 
-    def _integrate_sub_tri(self, Ke, Nc, nat_x_e):
+    def _integrate_sub_tri(self, Ke, Nc, nat_x_e, phi_n, phi_t):
         w_tot = 0
         if self.t_enrich:
             rule, correction = qd.TRI_RULES[10]
@@ -259,9 +323,23 @@ class XQuad4n(Quad4n):
             xi = rule[:, 0]
             eta = rule[:, 1]
             w = rule[:, 2]
+            nat_sub_x_e = nat_x_e.T @ Ni
             n = np.array([1 - xi - eta, xi, eta])
+            dn_dxi = np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]])
             xi_sub, eta_sub = nat_x_e.T @ Ni @ n
-            _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+
+            sub_J = dn_dxi @ nat_sub_x_e.T
+            N, _ = self._base_shape_functions(nat_sub_x_e[0, :], nat_sub_x_e[1, :])
+            sub_phi_n = N @ self.phi_n
+            sub_phi_t = N @ self.phi_t
+            phi_n_sub = sub_phi_n @ n
+            phi_t_sub = sub_phi_t @ n
+            dphi_n_sub_dxi = np.linalg.solve(sub_J, dn_dxi @ sub_phi_n)
+            dphi_t_sub_dxi = np.linalg.solve(sub_J, dn_dxi @ sub_phi_t)
+
+            _, dN_dxi_sub = self.shape_functions(
+                xi_sub, eta_sub, phi_n_sub, phi_t_sub, dphi_n_sub_dxi, dphi_t_sub_dxi
+            )
             J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
             detJ = np.linalg.det(J)
             dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
@@ -380,8 +458,10 @@ class XQuad4n(Quad4n):
         p1, d1 = project_on_crack(Nc1, self.node_coords[[0, 1, 2], :], coords)
         p2, d2 = project_on_crack(Nc2, self.node_coords[[0, 2, 3], :], coords)
         if len(touching) == 1:
+            print("warning: touching")
+            print("coords", coords)
             p = self.node_coords[touching[0], :]
-            # np.linalg.norm(p - coords)
+
         elif len(touching) == 2:
             nodes = self.node_coords[touching, :]
             v = nodes[1, :] - nodes[0, :]
@@ -399,18 +479,82 @@ class XQuad4n(Quad4n):
         return p
 
     def jump_shape_functions(self, xi, eta, tip_coords):
+        # def _fill_level_sets(Nc, NAT, pts, phi_n, phi_t):
+        #     for Ni, detJi in cut_embedding_tri_iter(Nc):
+        #         nat_sub_x_e = self.NAT_1.T @ Ni
+        #         N, _ = self._base_shape_functions(nat_sub_x_e[:, 0], nat_sub_x_e[:, 1])
+        #         sub_phi_n = N @ self.phi_n
+        #         sub_phi_t = N @ self.phi_t
+        #         for j in range(3):
+        #             j_next = (j + 1) % 3
+        #             A = nat_sub_x_e[:, j]
+        #             B = nat_sub_x_e[:, j_next]
+        #             AB = B - A
+        #             AP = pts - A
+        #             cross = AB[0] * AP[:, 1] - AB[1] * AP[:, 0]
+        #             dot = AP[:, 0] * AB[0] + AP[:, 1] * AB[1]
+        #             sq_len = AB[0] ** 2 + AB[1] ** 2
+        #             on_edge = (
+        #                 np.isclose(cross, 0.0, atol=1e-10)
+        #                 & (dot >= -1e-10)
+        #                 & (dot <= sq_len + 1e-10)
+        #             )
+        #
+        #             if np.any(on_edge):
+        #                 t = dot[on_edge] / sq_len
+        #
+        #                 phi_n[on_edge] = sub_phi_n[j] + t * (
+        #                     sub_phi_n[j_next] - sub_phi_n[j]
+        #                 )
+        #                 phi_t[on_edge] = sub_phi_t[j] + t * (
+        #                     sub_phi_t[j_next] - sub_phi_t[j]
+        #                 )
+        #
+        # Nc1, Nc2 = self._cal_intersections()
+        # if self.partial_cut:
+        #     xi_tip, eta_tip = self._cal_tip_nat_coords()
+        #     self._set_tip_var(xi_tip, eta_tip, Nc1, Nc2)
+        #     tip = self.tip_coords
+        #     N, _ = self._base_shape_functions(xi, eta)
+        #     t = self.tip_t
+        #     n = self.tip_n
+        #     assert tip is not None and t is not None and n is not None
+        #     x_e = N @ self.node_coords
+        #     phi_n = (x_e - tip) @ n
+        #     phi_t = (x_e - tip) @ t
+        # else:
+        #     phi_n = np.full_like(xi, np.nan)
+        #     phi_t = np.full_like(xi, np.nan)
+        #     pts = np.column_stack((xi, eta))
+        #     _fill_level_sets(Nc1, self.NAT_1, pts, phi_n, phi_t)
+        #     _fill_level_sets(Nc2, self.NAT_2, pts, phi_n, phi_t)
+        # assert not np.any(np.isnan(phi_n))
+
         return jump_shape_functions(
             self,
             self._base_shape_functions,
-            self._cubic_shape_functions,
+            self._base_shape_functions,
             xi,
             eta,
             tip_coords,
         )
 
-    def shape_functions(self, xi, eta):
+    def shape_functions(
+        self, xi, eta, phi_n=None, phi_t=None, dphi_n_dxi=None, dphi_t_dxi=None
+    ):
+        # return enriched_shape_functions(
+        #     self, self._base_shape_functions, self._cubic_shape_functions, xi, eta
+        # )
         return enriched_shape_functions(
-            self, self._base_shape_functions, self._cubic_shape_functions, xi, eta
+            self,
+            self._base_shape_functions,
+            self._base_shape_functions,
+            xi,
+            eta,
+            phi_n,
+            phi_t,
+            dphi_n_dxi,
+            dphi_t_dxi,
         )
 
     def cal_stresses(self, xi, eta, Ue):
@@ -420,7 +564,7 @@ class XQuad4n(Quad4n):
         dN_dxy = np.linalg.solve(J, dN_dxi)
         B = cal_B_2d_vec(dN_dxy)
         eps = B @ Ue
-        sig = self.C @ eps
+        sig = self.C @ eps[:, :, None]
         return sig
 
     def stresses_at_nodes(self, Ue):

@@ -208,7 +208,17 @@ def fill_element_displacement(elem_nodes, list_dof, Ug):
     return Ue
 
 
-def enriched_shape_functions(elem, shape_fn, pu_fn, xi, eta):
+def enriched_shape_functions(
+    elem,
+    shape_fn,
+    pu_fn,
+    xi,
+    eta,
+    phi_n=None,
+    phi_t=None,
+    dphi_n_dxi=None,
+    dphi_t_dxi=None,
+):
     n_points = xi.shape[0]
     N = np.empty(
         (
@@ -229,29 +239,66 @@ def enriched_shape_functions(elem, shape_fn, pu_fn, xi, eta):
     )
     (N[:, : elem.N_FN], dN_dxi[:, :, : elem.N_FN]) = shape_fn(xi, eta)
     Q, dQ_dxi = pu_fn(xi, eta)
-    phi_n = np.sum(elem.phi_n * N[:, : elem.N_FN], axis=1)
-    phi_t = np.sum(elem.phi_t * N[:, : elem.N_FN], axis=1)
+    if phi_n is None or phi_t is None:
+        phi_n = np.sum(elem.phi_n * N[:, : elem.N_FN], axis=1)
+        phi_t = np.sum(elem.phi_t * N[:, : elem.N_FN], axis=1)
     if elem.h_enrich:
+        assert phi_n is not None and phi_t is not None
         h_shifted = (np.sign(phi_n)[:, None] - np.sign(elem.phi_n)) / 2
         begin_h, end_h = elem.N_FN, elem.N_FN + elem.H_FN
         N[:, begin_h:end_h] = h_shifted * N[:, : elem.N_FN]
         dN_dxi[:, :, begin_h:end_h] = h_shifted[:, None, :] * dN_dxi[:, :, : elem.N_FN]
     if elem.t_enrich:
-        r = np.sqrt(phi_n**2 + phi_t**2)
-        r = np.maximum(r, 1e-14)  # avoid divide by zero
-        sqrt_r = np.sqrt(r)
-        sqrt_r_i = (elem.phi_n**2 + elem.phi_t**2) ** (1 / 4)
-        theta = np.atan2(phi_n, phi_t)
-        theta_i = np.atan2(elem.phi_n, elem.phi_t)
-        dphi_n_dxi = np.sum(elem.phi_n * dN_dxi[:, :, : elem.N_FN], axis=2)
-        dphi_t_dxi = np.sum(elem.phi_t * dN_dxi[:, :, : elem.N_FN], axis=2)
-        # sin(theta) = phi_n / r, cos(theta) = phi_t / r
-        dr_dxi = (
-            1 / r[:, None] * (phi_n[:, None] * dphi_n_dxi + phi_t[:, None] * dphi_t_dxi)
-        )  # = np.sin(theta) * dphi_n_dxi - np.cos(theta) * dphi_t_dxi
-        dtheta_dxi = (dphi_n_dxi * phi_t[:, None] - phi_n[:, None] * dphi_t_dxi) / (
-            phi_t**2 + phi_n**2
-        )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
+        if elem.partial_cut:
+            tip = elem.tip_coords
+            t = elem.tip_t
+            n = elem.tip_n
+            x_e = N[:, : elem.N_FN] @ elem.node_coords
+            phi_n = (x_e - tip) @ n
+            phi_t = (x_e - tip) @ t
+            r = np.sqrt(phi_n**2 + phi_t**2)
+            r = np.maximum(r, 1e-14)  # avoid divide by zero
+            sqrt_r = np.sqrt(r)
+
+            phi_n_nodes = (elem.node_coords - tip) @ n
+            phi_t_nodes = (elem.node_coords - tip) @ t
+            sqrt_r_i = (phi_n_nodes**2 + phi_t_nodes**2) ** (1 / 4)
+
+            theta = np.atan2(phi_n, phi_t)
+            theta_i = np.atan2(phi_n_nodes, phi_t_nodes)
+
+            J = dN_dxi[:, :, : elem.N_FN] @ elem.node_coords
+            dphi_n_dxi = J @ n
+            dphi_t_dxi = J @ t
+
+            # sin(theta) = phi_n / r, cos(theta) = phi_t / r
+            dr_dxi = (
+                1
+                / r[:, None]
+                * (phi_n[:, None] * dphi_n_dxi + phi_t[:, None] * dphi_t_dxi)
+            )  # = np.sin(theta) * dphi_n_dxi - np.cos(theta) * dphi_t_dxi
+            dtheta_dxi = (dphi_n_dxi * phi_t[:, None] - phi_n[:, None] * dphi_t_dxi) / (
+                phi_t**2 + phi_n**2
+            )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
+        else:
+            if dphi_n_dxi is None or dphi_t_dxi is None:
+                dphi_n_dxi = np.sum(elem.phi_n * dN_dxi[:, :, : elem.N_FN], axis=2)
+                dphi_t_dxi = np.sum(elem.phi_t * dN_dxi[:, :, : elem.N_FN], axis=2)
+            r = np.sqrt(phi_n**2 + phi_t**2)
+            r = np.maximum(r, 1e-14)  # avoid divide by zero
+            sqrt_r = np.sqrt(r)
+            sqrt_r_i = (elem.phi_n**2 + elem.phi_t**2) ** (1 / 4)
+            theta = np.atan2(phi_n, phi_t)
+            theta_i = np.atan2(elem.phi_n, elem.phi_t)
+            # sin(theta) = phi_n / r, cos(theta) = phi_t / r
+            dr_dxi = (
+                1
+                / r[:, None]
+                * (phi_n[:, None] * dphi_n_dxi + phi_t[:, None] * dphi_t_dxi)
+            )  # = np.sin(theta) * dphi_n_dxi - np.cos(theta) * dphi_t_dxi
+            dtheta_dxi = (dphi_n_dxi * phi_t[:, None] - phi_n[:, None] * dphi_t_dxi) / (
+                phi_t**2 + phi_n**2
+            )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
         bf = branch_functions(sqrt_r, theta).T
         bf_i = branch_functions(sqrt_r_i, theta_i).T
 
