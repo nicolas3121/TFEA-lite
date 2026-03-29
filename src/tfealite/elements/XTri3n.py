@@ -207,6 +207,16 @@ class XTri3n(Tri3n):
         )
         return N, dN_dxi
 
+    def _quadratic_shape_functions(self, xi, eta):
+        N, dN_dxi = self._base_shape_functions(xi, eta)
+        N2 = np.empty_like(N)
+        N2[:-1] = N[:-1] * N[1:]
+        N2[-1] = N[0] * N[-1]
+        dN2_dxi = np.empty_like(dN_dxi)
+        dN2_dxi[:, :-1] = N[None, :-1] * dN_dxi[:, 1:] + dN_dxi[:, :-1] * N[None, 1:]
+        dN2_dxi[:, -1] = N[None, -1] * dN_dxi[:, 0] + dN_dxi[:, -1] * N[None, 0]
+        return N2, dN2_dxi
+
     def _cubic_shape_functions(self, xi, eta):
         L1 = 1.0 - xi - eta
         L2 = xi

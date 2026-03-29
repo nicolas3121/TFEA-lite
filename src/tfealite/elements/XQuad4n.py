@@ -479,57 +479,6 @@ class XQuad4n(Quad4n):
         return p
 
     def jump_shape_functions(self, xi, eta, tip_coords):
-        # def _fill_level_sets(Nc, NAT, pts, phi_n, phi_t):
-        #     for Ni, detJi in cut_embedding_tri_iter(Nc):
-        #         nat_sub_x_e = self.NAT_1.T @ Ni
-        #         N, _ = self._base_shape_functions(nat_sub_x_e[:, 0], nat_sub_x_e[:, 1])
-        #         sub_phi_n = N @ self.phi_n
-        #         sub_phi_t = N @ self.phi_t
-        #         for j in range(3):
-        #             j_next = (j + 1) % 3
-        #             A = nat_sub_x_e[:, j]
-        #             B = nat_sub_x_e[:, j_next]
-        #             AB = B - A
-        #             AP = pts - A
-        #             cross = AB[0] * AP[:, 1] - AB[1] * AP[:, 0]
-        #             dot = AP[:, 0] * AB[0] + AP[:, 1] * AB[1]
-        #             sq_len = AB[0] ** 2 + AB[1] ** 2
-        #             on_edge = (
-        #                 np.isclose(cross, 0.0, atol=1e-10)
-        #                 & (dot >= -1e-10)
-        #                 & (dot <= sq_len + 1e-10)
-        #             )
-        #
-        #             if np.any(on_edge):
-        #                 t = dot[on_edge] / sq_len
-        #
-        #                 phi_n[on_edge] = sub_phi_n[j] + t * (
-        #                     sub_phi_n[j_next] - sub_phi_n[j]
-        #                 )
-        #                 phi_t[on_edge] = sub_phi_t[j] + t * (
-        #                     sub_phi_t[j_next] - sub_phi_t[j]
-        #                 )
-        #
-        # Nc1, Nc2 = self._cal_intersections()
-        # if self.partial_cut:
-        #     xi_tip, eta_tip = self._cal_tip_nat_coords()
-        #     self._set_tip_var(xi_tip, eta_tip, Nc1, Nc2)
-        #     tip = self.tip_coords
-        #     N, _ = self._base_shape_functions(xi, eta)
-        #     t = self.tip_t
-        #     n = self.tip_n
-        #     assert tip is not None and t is not None and n is not None
-        #     x_e = N @ self.node_coords
-        #     phi_n = (x_e - tip) @ n
-        #     phi_t = (x_e - tip) @ t
-        # else:
-        #     phi_n = np.full_like(xi, np.nan)
-        #     phi_t = np.full_like(xi, np.nan)
-        #     pts = np.column_stack((xi, eta))
-        #     _fill_level_sets(Nc1, self.NAT_1, pts, phi_n, phi_t)
-        #     _fill_level_sets(Nc2, self.NAT_2, pts, phi_n, phi_t)
-        # assert not np.any(np.isnan(phi_n))
-
         return jump_shape_functions(
             self,
             self._base_shape_functions,

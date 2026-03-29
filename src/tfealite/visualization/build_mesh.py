@@ -44,7 +44,7 @@ def build_XQuad4n(model, mult=1.0):
     ):
         for Ni, _ in tri_iterator:
             centroid = np.mean(Ni, axis=1, keepdims=True)
-            Ni = centroid + (Ni - centroid) * 0.99
+            Ni = centroid + (Ni - centroid) * 0.999
 
             sub_nat_x_e = Ni.T @ nat_x_e
             sub_shape_funcs = elem.shape_functions(
@@ -69,6 +69,7 @@ def build_XQuad4n(model, mult=1.0):
 
             points_ref.append(sub_vertices)
             displacements.append(node_disps)
+
             stresses.append(elem.cal_stresses(sub_nat_x_e[:, 0], sub_nat_x_e[:, 1], Ue))
 
     def build_quad(Ue, elem_vertices, elem, points_ref, faces, displacements, stresses):
@@ -104,14 +105,30 @@ def build_XQuad4n(model, mult=1.0):
         )
         most_enriched_node = elem_nodes[most_enriched_idx]
 
+        ls = model.ls[
+            elem_nodes[
+                np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS | HEAVISIDE_DOFS) != 0)
+            ]
+            - 1
+        ]
+
         ls = model.ls[most_enriched_node - 1]
-        tip = model.tip[most_enriched_node - 1]
+        tip = 1
+
+        if t_enrich:
+            tip = model.tip[
+                elem_nodes[np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0)] - 1
+            ]
+
         phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
 
         elem_vertices = model.nodes[elem_nodes - 1, 1:3]
         material = model.materials[mat_id - 1][1]
         real = model.reals[real_id - 1][1]
-        in_range = model.in_range[elem_nodes - 1]
+        if model.corrected:
+            in_range = model.in_range[elem_nodes - 1]
+        else:
+            in_range = np.ones(len(elem_nodes))
 
         Ue = fill_element_displacement(elem_nodes, model.list_dof, model.Ug).reshape(
             (-1, 2)

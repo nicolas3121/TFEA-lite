@@ -151,7 +151,7 @@ class XTetr4n(Tetr4n):
                     ]
                 )
                 phi_n12 = N1 * phi_n_face + (1 - N1) * num
-                on_interface = np.isclose(phi_n12, 0.0)
+                on_interface = np.isclose(phi_n12, 0.0, 1e-12)
                 if not np.any(on_interface):
                     cj = np.full(3, 1 / 3)
                 else:

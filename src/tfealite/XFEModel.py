@@ -60,7 +60,7 @@ class XFEModel(FEModel):
                         # TODO: pas echt aan het touchen als alle intersecties 0 of 1 zijn
                         # touching = np.argwhere(np.isclose(phi_n, 0))
                         if touching:
-                            print("touching")
+                            # print("touching")
                             phi_n, _ = ls.get(nodes, None)
                             filtered = nodes[np.argwhere(np.isclose(phi_n, 0))]
                         else:
@@ -103,7 +103,7 @@ class XFEModel(FEModel):
             # for elem_id, ci in self.cut_info.items():
         for elem_id, ci in partial_cuts:
             i, cut_type, tip = ci
-            print(cut_type)
+            # print(cut_type)
             if cut_type == CutType.PARTIAL:
                 nodes = self.elements[elem_id - 1][4]
                 nodes = np.asarray(nodes)
@@ -129,13 +129,14 @@ class XFEModel(FEModel):
         ls.gen_from_line_segment(self.nodes, p1, p2, embedded=embedded)
         self.level_sets.append(ls)
 
-    def insert_crack_spline(self, bspline, embedded):
+    def insert_crack_spline(self, bspline, embedded, h=0.05, snapping_tolerance=0.03):
         ls = LevelSet()
         ls.gen_from_bspline(
             self.nodes,
             bspline,
-            embedded=embedded,
-            h=0.05,
+            h=h,
             geometrical_range=1.5 * self.geometrical_range,
+            embedded=embedded,
+            snapping_tolerance=snapping_tolerance,
         )
         self.level_sets.append(ls)

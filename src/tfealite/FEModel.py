@@ -21,7 +21,7 @@ class FEModel:
         self.list_dof = None
         self.Kg = None
         self.Mg = None
-        model.model_print(self)
+        # model.model_print(self)
 
     def gen_list_dof(self, dof_per_node):
         model.gen_list_dof(self, dof_per_node=dof_per_node)
@@ -42,6 +42,13 @@ class FEModel:
             force_expression=force_expression,
             tol=tol,
             reset=reset,
+        )
+
+    def gen_surface_tractions(
+        self, sel_condition, traction_expression, elem, deg, tol=1e-8, reset=True
+    ):
+        load.gen_surface_tractions(
+            self, sel_condition, traction_expression, elem, deg, tol=tol, reset=reset
         )
 
     def solve_static(self, Fg=[]):

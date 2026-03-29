@@ -46,7 +46,7 @@ def cal_KgMg(
     ci = None
     if xfem:
         cut_info = model.cut_info
-        print(cut_info)
+        # print(cut_info)
     if eval_mass:
         Mg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
     for i_e, ele_info in enumerate(model.elements):
@@ -69,10 +69,6 @@ def cal_KgMg(
             else:
                 in_range = np.ones(len(ele_info[4]))
             t_enrich = local_dofs_per_node & BRANCH_DOFS != 0
-            # h_enrich = np.any(np.bitwise_and(HEAVISIDE_DOFS, elem_dofs))
-            # t_enrich = np.any(np.bitwise_and(BRANCH_DOFS, elem_dofs))
-
-            # print(h_enrich, t_enrich)
             if h_enrich or t_enrich:
                 # voor elke node van een doorsneden element level set en tip bijhouden
                 tip = 1
@@ -92,6 +88,18 @@ def cal_KgMg(
                         - 1
                     ]
                 phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
+
+                if t_enrich and np.any(np.isnan(phi_t)):
+                    print("encountered nan in tip enriched element")
+                    print("phi_n", phi_n)
+                    print("phi_t", phi_t)
+                # if np.any(np.isnan(phi_n)) or np.any(np.isnan(phi_t)):
+                #     print("dofs", elem_dofs)
+                #     print("h_enrich", h_enrich, "t_enrich", t_enrich)
+                #     print("in_range", model.in_range[elem_nodes - 1])
+                #     print("nodes", elem_nodes)
+                #     print("phi_n", phi_n)
+                #     print("phi_t", phi_t)
                 assert cut_info
                 ci = cut_info.get(ele_info[0])
                 partial_cut = False
@@ -209,22 +217,22 @@ def quasi_gram_schmidt(model, Kg):
     data_list = []
     processed_dofs = np.zeros(Kg.shape[0], dtype=bool)
 
-    def orthogonalize_at_node_batched(node_numbers, contiguous=False):
+    def orthogonalize_at_node_batched(dof_numbers, contiguous=False):
         Kg_local = np.zeros(
-            (node_numbers.shape[0], node_numbers.shape[1], node_numbers.shape[1])
+            (dof_numbers.shape[0], dof_numbers.shape[1], dof_numbers.shape[1])
         )
         if contiguous:
-            for n, numbers in enumerate(node_numbers):
+            for n, numbers in enumerate(dof_numbers):
                 Kg_local[n] = Kg[
                     numbers[0] : numbers[-1] + 1, numbers[0] : numbers[-1] + 1
                 ].toarray()
         else:
-            for n, numbers in enumerate(node_numbers):
+            for n, numbers in enumerate(dof_numbers):
                 Kg_local[n] = Kg[numbers, :][:, numbers].toarray()
 
-        T_local = np.tile(np.eye(node_numbers.shape[1]), (Kg_local.shape[0], 1, 1))
+        T_local = np.tile(np.eye(dof_numbers.shape[1]), (Kg_local.shape[0], 1, 1))
 
-        for nj in range(n_dof_per_node, node_numbers.shape[1], n_dof_per_node):
+        for nj in range(n_dof_per_node, dof_numbers.shape[1], n_dof_per_node):
             j_start = nj
             j_end = nj + n_dof_per_node
             for ni in range(0, nj, n_dof_per_node):
@@ -250,14 +258,19 @@ def quasi_gram_schmidt(model, Kg):
                 T_local[:, :, j_start:j_end] -= (
                     coef[:, None, None] * T_local[:, :, i_start:i_end]
                 )
-        processed_dofs[node_numbers.ravel()] = True
+        processed_dofs[dof_numbers.ravel()] = True
         n_local, r_local, c_local = np.nonzero(T_local)
         vals = T_local[n_local, r_local, c_local]
-        row_list.append(node_numbers[n_local, r_local])
-        col_list.append(node_numbers[n_local, c_local])
+        row_list.append(dof_numbers[n_local, r_local])
+        col_list.append(dof_numbers[n_local, c_local])
         data_list.append(vals)
 
     node_numbers = [
+        # 1
+        # + np.where(
+        #     (model.list_dof.list_dof & HEAVISIDE_DOFS != 0)
+        #     & (model.list_dof.list_dof & BRANCH_DOFS == 0)
+        # )[0],
         1
         + np.where(
             (model.list_dof.list_dof & HEAVISIDE_DOFS == 0)
@@ -269,7 +282,10 @@ def quasi_gram_schmidt(model, Kg):
             & (model.list_dof.list_dof & BRANCH_DOFS != 0)
         )[0],
     ]
-    dof_types = [BRANCH_DOFS, HEAVISIDE_DOFS | BRANCH_DOFS]
+    dof_types = [
+        BRANCH_DOFS,
+        HEAVISIDE_DOFS | BRANCH_DOFS,
+    ]
     contiguous = [True, True]
 
     dof_numbers = [

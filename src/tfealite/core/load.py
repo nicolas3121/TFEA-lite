@@ -43,7 +43,7 @@ def gen_surface_tractions(
         < tol
     )
 
-    for i_e, ele_info in enumerate(model.elements):
+    for _, ele_info in enumerate(model.elements):
         elem_nodes = np.array(ele_info[4], dtype=np.uint32)
         elem_bools = node_on_boundary[elem_nodes - 1]
 
@@ -54,12 +54,10 @@ def gen_surface_tractions(
         real_ie = ele_info[3]
         real = model.reals[real_ie - 1][1]
 
-        # 3. Call the STATIC method on the element class directly
         Fe_local = elem_func.cal_traction_loads(
             elem_vertices, elem_bools, traction_expression, real, deg
         )
 
-        # 4. Global Assembly
         g_dofs = model.list_dof.get_elem_dof_numbers_flat(elem_nodes, BASE_DOFS).ravel()
 
         for i_dof, global_dof_index in enumerate(g_dofs):

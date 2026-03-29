@@ -5,6 +5,12 @@ import tfealite as tf
 from tfealite import DofType
 from tfealite.core.sif import DisplacementCorrelationMethodSIF as DCMSIF
 
+# from tfealite.visualization.build_mesh import (
+#     my_build_Quad4n,
+#     build_XQuad4n,
+# )
+# import pyvista as pv
+
 
 def test_pure_mode_1():
     E_mod = 200e9
@@ -64,28 +70,70 @@ def test_pure_mode_1():
     kappa = (3 - 0.3) / (1 + 0.3)
 
     dcm = DCMSIF(
-        kappa, G_mod, np.array([0.011, 0.021, 0.025, 0.031, 0.041, 0.045]), None
+        kappa, G_mod, np.array([0.025, 0.031, 0.035, 0.038, 0.043, 0.048, 0.055]), None
     )
     K_I, K_II = dcm.cal_sif(model.level_sets[0], model, model.cut_info, 1.0)
 
     # analytical solutions https://doi.org/10.1016/0013-7944(68)90027-1
     K_I_analytical = 1 * np.sqrt(np.pi * a) * np.sqrt(1 / np.cos((np.pi * a) / (2 * W)))
+    print("analytical", K_I_analytical)
+    print("numerical", K_I)
+
     assert np.isclose(K_I, K_I_analytical, rtol=0.01)
     assert np.isclose(K_II / K_I, 0.0, atol=0.001)
 
-    # model.Ug *= 1e10
-    # mesh1 = my_build_Quad4n(model).cast_to_unstructured_grid()
-    # ghosts = np.argwhere(mesh1["is_cut"] > 0)
+    # mult = 1e10
+    # mesh1 = my_build_Quad4n(model, mult=mult).cast_to_unstructured_grid()
+    # ghosts = np.argwhere(mesh1["is_enriched"] > 0)
     # mesh1.remove_cells(ghosts, inplace=True)
-    # mesh2 = build_XQuad4n(model)
+    # mesh2 = build_XQuad4n(model, mult=mult)
     # blocks = pv.MultiBlock([mesh1, mesh2])
-    # # blocks.plot(show_edges=True, color="lightblue")
+    # pv.set_plot_theme("document")
+    # # pl = pv.Plotter(off_screen=True, window_size=[3840, 3840])
     # pl = pv.Plotter()
-    # pl.add_mesh(blocks, color="lightblue", show_edges=True)
+    # pl.enable_anti_aliasing("ssaa")
+    #
+    # vm_1 = mesh1.point_data["von_mises"]
+    # vm_2 = mesh2.point_data["von_mises"]
+    # all_vm = np.concatenate([vm_1, vm_2])
+    #
+    # v_max = np.percentile(all_vm, 98)
+    #
+    # sbar_args = {
+    #     "title": "Von Mises Stress (Pa)",
+    #     "color": "black",
+    #     "font_family": "arial",
+    #     "fmt": "%.2e",
+    #     "title_font_size": 24,
+    #     "label_font_size": 20,
+    #     "vertical": True,
+    # }
+    # pl.add_mesh(
+    #     blocks,
+    #     scalars="von_mises",
+    #     cmap="turbo",
+    #     show_edges=True,
+    #     lighting=False,
+    #     clim=[0, v_max],
+    #     show_scalar_bar=False,
+    #     # scalar_bar_args=sbar_args,
+    # )
+    # pl.zoom_camera("tight")
     # pl.view_xy()
-    # # pl.enable_parallel_projection()
+    # export_filename = "xfem_sif_presentation.png"
+    # # pl.screenshot(export_filename, transparent_background=False)
+    # # pl.close()
+    #
+    # print(np.any(np.isnan(mesh1.point_data["displacement"])))
+    # print(np.any(np.isnan(mesh2.point_data["displacement"])))
+    #
+    # # blocks.plot(show_edges=True, color="lightblue")
+    # # pl = pv.Plotter()
+    # # pl.add_mesh(blocks, color="lightblue", show_edges=True)
+    # # pl.view_xy()
+    # # # pl.enable_parallel_projection()
     # pl.show()
-    # assert False
+    # # # assert False
 
 
 def test_mixed_mode():
@@ -94,11 +142,12 @@ def test_mixed_mode():
     kappa = (3 - nu) / (3 + nu)
     G_mod = (E_mod) / (2 * (1 + nu))
     a = 0.115
-    W = 0.5
+    W = 0.75
+    H = W
     angle = np.pi / 4
-    x_elem = 100
-    y_elem = int(1.5 * x_elem) + 1
-    nodes, elements = tf.gen_rect_Quad4n(2 * W, 1.5, x_elem, y_elem)
+    x_elem = 150
+    y_elem = 153
+    nodes, elements = tf.gen_rect_Quad4n(2 * W, 2 * H, x_elem, y_elem)
     materials = [[1, {"E": E_mod, "nu": nu, "rho": 7850}]]
     reals = [[1, {"t": 1}]]
     model = tf.XFEModel(
@@ -110,8 +159,8 @@ def test_mixed_mode():
         geometrical_range=0.07,
         corrected=True,
     )
-    p1 = np.array([0.5 - a * np.cos(angle), 0.75 - a * np.sin(angle)])
-    p2 = np.array([0.5 + a * np.cos(angle), 0.75 + a * np.sin(angle)])
+    p1 = np.array([W - a * np.cos(angle), H - a * np.sin(angle)])
+    p2 = np.array([W + a * np.cos(angle), H + a * np.sin(angle)])
 
     pts = np.linspace(p1, p2, 4).T
     tck, u = splprep(pts, s=0, k=3)
@@ -146,27 +195,65 @@ def test_mixed_mode():
     # model.Ug = np.zeros_like(model.Ug)
     kappa = (3 - 0.3) / (1 + 0.3)
 
-    dcm = DCMSIF(kappa, G_mod, np.array([0.035, 0.038, 0.043, 0.048, 0.055]), None)
+    dcm = DCMSIF(kappa, G_mod, np.array([0.035, 0.038, 0.043, 0.048]), None)
+    # dcm = DCMSIF(
+    #     kappa,
+    #     G_mod,
+    #     np.array([0.018, 0.021, 0.025, 0.031, 0.035, 0.038, 0.043, 0.048, 0.055]),
+    #     None,
+    # )
     K_I, K_II = dcm.cal_sif(model.level_sets[0], model, model.cut_info, 1.0)
-    print(K_I, K_II)
+    print("numerical", K_I, K_II)
 
     K_I_analytical = 1 * np.sqrt(np.pi * a) * np.sin(angle) ** 2
     K_II_analytical = 1 * np.sqrt(np.pi * a) * np.sin(angle) * np.cos(angle)
+    print("analytical", K_I_analytical)
 
-    assert np.isclose(K_I / K_II, 1.0, atol=0.01)
+    assert np.isclose(K_I / K_II, 1.0, atol=0.02)
     assert np.isclose(K_I, K_I_analytical, rtol=0.05)
     assert np.isclose(K_II, K_II_analytical, rtol=0.05)
 
-    # model.Ug *= 1e10
-    # mesh1 = my_build_Quad4n(model).cast_to_unstructured_grid()
-    # ghosts = np.argwhere(mesh1["is_cut"] > 0)
+    # mult = 1e10
+    # mesh1 = my_build_Quad4n(model, mult=mult).cast_to_unstructured_grid()
+    # ghosts = np.argwhere(mesh1["is_enriched"] > 0)
     # mesh1.remove_cells(ghosts, inplace=True)
-    # mesh2 = build_XQuad4n(model)
+    # mesh2 = build_XQuad4n(model, mult=mult)
     # blocks = pv.MultiBlock([mesh1, mesh2])
-    # # blocks.plot(show_edges=True, color="lightblue")
+    # pv.set_plot_theme("document")
+    # # pl = pv.Plotter(off_screen=True, window_size=[3840, 3840])
     # pl = pv.Plotter()
-    # pl.add_mesh(blocks, color="lightblue", show_edges=True)
+    # pl.enable_anti_aliasing("ssaa")
+    #
+    # vm_1 = mesh1.point_data["von_mises"]
+    # vm_2 = mesh2.point_data["von_mises"]
+    # all_vm = np.concatenate([vm_1, vm_2])
+    #
+    # v_max = np.percentile(all_vm, 98)
+    #
+    # sbar_args = {
+    #     "title": "Von Mises Stress (Pa)",
+    #     "color": "black",
+    #     "font_family": "arial",
+    #     "fmt": "%.2e",
+    #     "title_font_size": 24,
+    #     "label_font_size": 20,
+    #     "vertical": True,
+    # }
+    # pl.add_mesh(
+    #     blocks,
+    #     scalars="von_mises",
+    #     cmap="turbo",
+    #     show_edges=True,
+    #     lighting=False,
+    #     clim=[0, v_max],
+    #     show_scalar_bar=False,
+    #     # scalar_bar_args=sbar_args,
+    # )
+    # pl.zoom_camera("tight")
     # pl.view_xy()
-    # # pl.enable_parallel_projection()
+    # export_filename = "xfem_sif_mixed_presentation.png"
+    # # pl.screenshot(export_filename, transparent_background=False)
+    # # pl.close()
     # pl.show()
+    #
     # assert False

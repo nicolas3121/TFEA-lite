@@ -62,8 +62,8 @@ class LevelSet:
         embedded=False,
         snapping_tolerance=0.03,
     ):
-        geometrical_range = max(3 * h, 2 * geometrical_range)
-        print(geometrical_range)
+        geometrical_range = max(3 * h, 3 * geometrical_range)
+        # print(geometrical_range)
         coordinates = np.asarray(nodes)[:, 1:3]
         self.mesh_tree = KDTree(coordinates)
         self.bspline = bspline
@@ -72,7 +72,8 @@ class LevelSet:
         ddbspline = bspline.derivative(2)
         self.ddbspline = bspline.derivative(2)
 
-        t2, t1 = bspline(np.array([0.0, 1.0]))
+        t2 = bspline(0.0)
+        t1 = bspline(1.0)
         geometrical_range2 = 0.0
         if embedded:
             geometrical_range2 = geometrical_range
@@ -91,21 +92,73 @@ class LevelSet:
             indices_near_tip2,
         )
         nodes_subset = coordinates[indices_subset]
+        # self.indices_subset = indices_subset
+        problematic_nodes = np.array([10, 11, 23, 22]) - 1
+        np.where(
+            np.bitwise_or.reduce(
+                indices_subset[None, :] == problematic_nodes[:, None], axis=0
+            )
+        )[0]
 
-        u_range = np.linspace(0, 1, 50)
+        u_range = np.linspace(0, 1, 10000)
         u_i = u_range[KDTree(bspline(u_range)).query(nodes_subset)[1]]
-        for _ in range(100):
+        # print("u_i_initial", u_i[locations])
+
+        # for i in range(100):
+        #     S = bspline(u_i)
+        #     dS = dbspline(u_i)
+        #     ddS = ddbspline(u_i)
+        #     distance = S - nodes_subset
+        #     f = np.sum(dS * distance, axis=1)
+        #     df = np.sum(ddS * distance, axis=1) + np.sum(dS * dS, axis=1)
+        #     du = f / df
+        #     pushing_past_1 = (u_i == 1.0) & (f < 0)
+        #     pushing_past_0 = (u_i == 0.0) & (f > 0)
+        #     # print("u_i", u_i[locations], "du", du[locations])
+        #     u_i_next = np.clip(u_i - du, 0.0, 1.0)
+        #     u_i_next = np.where(pushing_past_1 | pushing_past_0, u_i, u_i_next)
+        #     if np.all(np.isclose(u_i, u_i_next, atol=1e-15)):
+        #         break
+        #     elif i == 99:
+        #         raise ValueError("newton iterations didn't converge")
+        for i in range(1000):
             S = bspline(u_i)
             dS = dbspline(u_i)
             ddS = ddbspline(u_i)
             distance = S - nodes_subset
+
             f = np.sum(dS * distance, axis=1)
             df = np.sum(ddS * distance, axis=1) + np.sum(dS * dS, axis=1)
+
+            # 1. HESSIAN SAFEGUARD:
+            # If df goes negative, the parabola flipped. Fallback to Gauss-Newton.
+            df_gn = np.sum(dS * dS, axis=1)
+            df = np.where(df < 1e-12, df_gn, df)
+            # print("f", f[locations], "df", df[locations])
+
             du = f / df
+
+            # 2. BOUNDARY LOCK:
+            # f < 0 means u wants to increase. f > 0 means u wants to decrease.
+            pushing_past_1 = (u_i == 1.0) & (f < 0)
+            pushing_past_0 = (u_i == 0.0) & (f > 0)
+
             u_i_next = np.clip(u_i - du, 0.0, 1.0)
+
+            # Force convergence for nodes stuck pushing against the boundary
+            u_i_next = np.where(pushing_past_1 | pushing_past_0, u_i, u_i_next)
+            # print("u_i", u_i[locations], "du", du[locations])
+
             if np.all(np.isclose(u_i, u_i_next, atol=1e-15)):
                 break
+            elif i == 999:
+                # Optional: Print out the specific nodes failing to help debug
+                bad_mask = ~np.isclose(u_i, u_i_next, atol=1e-15)
+                print(f"Failed at u_i: {u_i[bad_mask]}")
+                raise ValueError("Newton iterations didn't converge")
+
             u_i = u_i_next
+
         phi_n = np.full(coordinates.shape[0], np.nan, dtype=np.float64)
         S = bspline(u_i)
         t = dbspline(u_i)
@@ -115,9 +168,9 @@ class LevelSet:
         distance = nodes_subset - S
         phi_n_subset = np.sum(n * distance, axis=1)
         phi_n[indices_subset] = phi_n_subset
-        in_front = np.isclose(u_i, 1.0)
+        in_front = np.isclose(u_i, 1.0, 1e-12)
         if embedded:
-            in_front |= np.isclose(u_i, 0.0)
+            in_front |= np.isclose(u_i, 0.0, 1e-12)
         to_snap = np.where(
             (np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h) & ~in_front)
         )[0]
@@ -135,14 +188,14 @@ class LevelSet:
             t_tip /= np.linalg.norm(t_tip)
             t_tip *= -1 * direction_behind
 
-            in_front = np.isclose(u_i, u_i_front)
+            in_front = np.isclose(u_i, u_i_front, 1e-12)
             in_front_indices = indices_subset[in_front]
 
             phi_t[in_front_indices] = np.sum(
                 (coordinates[in_front_indices] - tip) * t_tip, axis=1
             )
             behind_indices = np.intersect1d(indices_near_tip, indices_subset[~in_front])
-            print(behind_indices)
+            # print(behind_indices)
             if len(behind_indices):
                 u_i_behind = u_i[
                     np.searchsorted(indices_subset, behind_indices)
@@ -192,17 +245,17 @@ class LevelSet:
         phi_t2 = None
         n_nodes = len(nodes)
         # no sign change of normal level set inside element or at node / edge
-        sign_n = (1 - np.isclose(phi_n, 0)) * np.sign(phi_n)
+        sign_n = (1 - np.isclose(phi_n, 0, atol=1e-12)) * np.sign(phi_n)
         m1 = sign_n[0] * sign_n[-1]
         m2 = sign_n[:-1] * sign_n[1:]
         if m1 > 0 and np.all(m2 > 0):
             return CutType.NONE, None, False
-        sign_t = (1 - np.isclose(phi_t, 0)) * np.sign(phi_t)
+        sign_t = (1 - np.isclose(phi_t, 0, atol=1e-12)) * np.sign(phi_t)
         if np.sum(sign_t) == n_nodes:
             return CutType.NONE, None, False
         if self.phi_t2 is not None:
             phi_t2 = self.phi_t2[nodes]
-            sign_t2 = (1 - np.isclose(phi_t2, 0)) * np.sign(phi_t2)
+            sign_t2 = (1 - np.isclose(phi_t2, 0, atol=1e-12)) * np.sign(phi_t2)
             if np.sum(sign_t2) == n_nodes:
                 return CutType.NONE, None, False
         num = np.empty_like(phi_n)
@@ -217,7 +270,11 @@ class LevelSet:
         actual_cuts = ~unsolvable & in_element
         n_actual_cuts = np.sum(actual_cuts)
         touching = not (
-            np.any(actual_cuts & ~np.isclose(N1, 0) & ~np.isclose(N1, 1))
+            np.any(
+                actual_cuts
+                & ~np.isclose(N1, 0, atol=1e-12)
+                & ~np.isclose(N1, 1, atol=1e-12)
+            )
             or n_actual_cuts == actual_cuts.shape[0]
         )
         if n_actual_cuts == 0:
@@ -231,8 +288,10 @@ class LevelSet:
             d_t2 = np.empty_like(phi_n)
             d_t2[:-1] = N1[:-1] * phi_t2[:-1] + (1 - N1[:-1]) * phi_t2[1:]
             d_t2[-1] = N1[-1] * phi_t2[-1] + (1 - N1[-1]) * phi_t2[0]
-            x2 = np.sum((1 - np.isclose(d_t2, 0.0)) * np.sign(d_t2) * actual_cuts)
-        x = np.sum((1 - np.isclose(d_t, 0.0)) * np.sign(d_t) * actual_cuts)
+            x2 = np.sum(
+                (1 - np.isclose(d_t2, 0.0, 1e-12)) * np.sign(d_t2) * actual_cuts
+            )
+        x = np.sum((1 - np.isclose(d_t, 0.0, 1e-12)) * np.sign(d_t) * actual_cuts)
 
         if x == 2:
             return CutType.NONE, None, False
@@ -255,6 +314,9 @@ class LevelSet:
         nodes = np.asarray(element[4]) - 1
         phi_n = self.phi_n[nodes]
         phi_t = self.phi_t[nodes]
+        if np.any(np.isnan(phi_n)) or np.any(np.isnan(phi_t)):
+            return (False, None, None)
+
         phi_t2 = None
 
         r1 = np.sqrt(phi_n**2 + phi_t**2)
@@ -263,6 +325,8 @@ class LevelSet:
         in_range2 = None
         if self.phi_t2 is not None:
             phi_t2 = self.phi_t2[nodes]
+            if np.any(np.isnan(phi_t2)):
+                return (False, None, None)
             r2 = np.sqrt(phi_n**2 + phi_t2**2)
             in_range2 = r2 <= radius
             is_in_range2 = np.any(in_range2)

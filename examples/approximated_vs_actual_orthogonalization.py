@@ -301,7 +301,7 @@ def elem_func(
     return elem
 
 
-n = np.arange(11, 200, 2)
+n = np.arange(11, 100, 4)
 conditioning_no_orth = []
 conditioning = []
 conditioning_fem = []
@@ -320,7 +320,7 @@ for i in n:
         corrected=True,
     )
     p1 = np.array([-0.1, 0.5])
-    p2 = np.array([0.5, 0.65])
+    p2 = np.array([0.5, 0.5])
     model.insert_crack_segment(p1, p2, embedded=False)
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     # model.list_dof.remove_dofs(
@@ -340,10 +340,12 @@ for i in n:
 
 plt.figure()
 # plt.plot(n, conditioning_no_orth, label="no orth")
-plt.plot(n, conditioning, label="orth")
+plt.plot(n, conditioning, label="orthogonalized XFEM")
 plt.plot(n, conditioning_fem, label="fem")
 plt.yscale("log", base=10)
 plt.xscale("log", base=10)
-plt.title("conditioning")
+plt.ylabel("scaled condition number")
+plt.xlabel("number of nodes")
+plt.title("Scaled condition number")
 plt.legend()
-plt.show()
+plt.savefig("scn_corrected.png")
