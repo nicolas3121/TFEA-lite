@@ -6,6 +6,7 @@ from numpy.typing import NDArray
 from scipy.integrate import solve_ivp
 from scipy.interpolate import BSpline, splprep
 from scipy.spatial import KDTree
+from ..elements.utils import ELEM_EDGES
 
 
 class CutType(Enum):
@@ -46,6 +47,26 @@ class LevelSet:
         self.dbspline = bspline.derivative()
         self.ddbspline = bspline.derivative(nu=2)
 
+        self.phi_n = phi_n
+        self.phi_t = phi_t1
+        self.embedded = embedded
+        if embedded:
+            self.phi_t2 = phi_t2
+
+    def gen_from_plane(self, nodes, p1, p2, p3, embedded=False):
+        coordinates = np.asarray(nodes, dtype=float)[:, 1:4]
+        v1 = p3 - p2
+        v1 /= np.linalg.norm(v1)
+        v2 = p2 - p1
+        v2 -= np.dot(v1, v2) * v1
+        v2 /= np.linalg.norm(v2)
+        v3 = np.cross(v1, v2)
+        t1 = v2
+        t2 = -v2
+        n = v3
+        phi_n = np.sum((coordinates - p1) * n, axis=1)
+        phi_t1 = np.sum((coordinates - p2) * t1, axis=1)
+        phi_t2 = np.sum((coordinates - p1) * t2, axis=1)
         self.phi_n = phi_n
         self.phi_t = phi_t1
         self.embedded = embedded
@@ -238,6 +259,8 @@ class LevelSet:
         assert self.phi_n is not None
         assert self.phi_t is not None
         nodes = np.asarray(element[4]) - 1
+        elem_type = element[1]
+        num_edges, denom_edges = ELEM_EDGES[elem_type]
         phi_n = self.phi_n[nodes]
         phi_t = self.phi_t[nodes]
         if np.any(np.isnan(phi_n)):
@@ -246,9 +269,8 @@ class LevelSet:
         n_nodes = len(nodes)
         # no sign change of normal level set inside element or at node / edge
         sign_n = (1 - np.isclose(phi_n, 0, atol=1e-12)) * np.sign(phi_n)
-        m1 = sign_n[0] * sign_n[-1]
-        m2 = sign_n[:-1] * sign_n[1:]
-        if m1 > 0 and np.all(m2 > 0):
+        m = sign_n[denom_edges] * sign_n[num_edges]
+        if np.all(m > 0):
             return CutType.NONE, None, False
         sign_t = (1 - np.isclose(phi_t, 0, atol=1e-12)) * np.sign(phi_t)
         if np.sum(sign_t) == n_nodes:
@@ -258,14 +280,11 @@ class LevelSet:
             sign_t2 = (1 - np.isclose(phi_t2, 0, atol=1e-12)) * np.sign(phi_t2)
             if np.sum(sign_t2) == n_nodes:
                 return CutType.NONE, None, False
-        num = np.empty_like(phi_n)
-        num[:-1] = phi_n[1:]
-        num[-1] = phi_n[0]
-        denom = num - phi_n
+        num = phi_n[num_edges]
+        denom = num - phi_n[denom_edges]
         unsolvable = denom == 0
         denom += unsolvable
         N1 = np.divide(num, denom, out=np.zeros_like(num), where=~unsolvable)
-        # N1 = num / denom
         in_element = (N1 >= 0) & (N1 <= 1)
         actual_cuts = ~unsolvable & in_element
         n_actual_cuts = np.sum(actual_cuts)
@@ -279,30 +298,25 @@ class LevelSet:
         )
         if n_actual_cuts == 0:
             return CutType.NONE, None, False
-        d_t = np.empty_like(phi_n)
-        d_t[:-1] = N1[:-1] * phi_t[:-1] + (1 - N1[:-1]) * phi_t[1:]
-        d_t[-1] = N1[-1] * phi_t[-1] + (1 - N1[-1]) * phi_t[0]
+        d_t = N1 * phi_t[denom_edges] + (1 - N1) * phi_t[num_edges]
         d_t2 = None
         x2 = None
         if phi_t2 is not None:
-            d_t2 = np.empty_like(phi_n)
-            d_t2[:-1] = N1[:-1] * phi_t2[:-1] + (1 - N1[:-1]) * phi_t2[1:]
-            d_t2[-1] = N1[-1] * phi_t2[-1] + (1 - N1[-1]) * phi_t2[0]
+            d_t2 = N1 * phi_t2[denom_edges] + (1 - N1) * phi_t2[num_edges]
             x2 = np.sum(
                 (1 - np.isclose(d_t2, 0.0, 1e-12)) * np.sign(d_t2) * actual_cuts
             )
         x = np.sum((1 - np.isclose(d_t, 0.0, 1e-12)) * np.sign(d_t) * actual_cuts)
 
-        if x == 2:
+        if x == n_actual_cuts:
             return CutType.NONE, None, False
         if x2 is not None:
-            if x2 == 2:
+            if x2 == n_actual_cuts:
                 return CutType.NONE, None, False
-            elif x2 >= -1 and n_actual_cuts > 1:
+            elif x2 > -n_actual_cuts and n_actual_cuts > 1:
                 return CutType.PARTIAL, 2, touching
-        if x >= -1 and n_actual_cuts > 1:
+        if x > -n_actual_cuts and n_actual_cuts > 1:
             return CutType.PARTIAL, 1, touching
-        # print(CutType.CUT, "phi_n", phi_n, "phi_t", phi_t)
         return CutType.CUT, None, touching
 
     def in_range(self, element, radius) -> Tuple[bool, None | int, None | NDArray]:

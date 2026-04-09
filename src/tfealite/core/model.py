@@ -75,6 +75,58 @@ def gen_rect_Tri3n(L, H, nx=20, ny=20):
     return nodes, elements
 
 
+def gen_rect_Tetr4n(L, H, D, nx=20, ny=20, nz=20):
+    x = np.linspace(0.0, L, nx + 1)
+    y = np.linspace(0.0, H, ny + 1)
+    z = np.linspace(0.0, D, nz + 1)
+    nxn, nyn = len(x), len(y)
+
+    nodes = []
+    nid = 1
+    for zz in z:
+        for yy in y:
+            for xx in x:
+                nodes.append([nid, float(xx), float(yy), float(zz)])
+                nid += 1
+
+    nodes = np.array(nodes, dtype=float)
+
+    elements = []
+    eid = 1
+
+    y_step = nxn
+    z_step = nyn * nxn
+
+    for kz in range(nz):
+        for ky in range(ny):
+            for kx in range(nx):
+                n000 = kz * z_step + ky * y_step + kx + 1
+
+                n100 = n000 + 1
+                n010 = n000 + y_step
+                n110 = n010 + 1
+
+                n001 = n000 + z_step
+                n101 = n001 + 1
+                n011 = n001 + y_step
+                n111 = n011 + 1
+
+                tets = [
+                    (n000, n100, n110, n111),
+                    (n000, n110, n010, n111),
+                    (n000, n010, n011, n111),
+                    (n000, n011, n001, n111),
+                    (n000, n001, n101, n111),
+                    (n000, n101, n100, n111),
+                ]
+
+                for n1, n2, n3, n4 in tets:
+                    elements.append([eid, "Tetr4n", 1, 1, (n1, n2, n3, n4)])
+                    eid += 1
+
+    return nodes, elements
+
+
 def gen_ibeam_Tetr4n(L, h, bf, tw, tf, nx=50, ny_f=4, ny_w=1, nz_f=1, nz_w=10):
     x = np.linspace(0.0, L, nx + 1)
     y1 = np.linspace(-bf / 2, -tw / 2, ny_f + 1)

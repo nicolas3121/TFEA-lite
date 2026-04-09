@@ -175,3 +175,25 @@ def test_is_touching_Quad4n(p1_coord, p2_coord, answer):
     ls.gen_from_line_segment(nodes, p1, p2, embedded=False)
     cut, tip, touching = ls.is_cut(elements[0])
     assert touching == answer
+
+
+POINTS_DATA_INSIDE_FULL_TETR4N = [
+    ([-1.0, 0.0, 0.5], [1.2, 0.0, 0.5], [1.2, 1.2, 0.5]),
+]
+
+
+@pytest.mark.parametrize("p1_coord, p2_coord, p3_coord", POINTS_DATA_INSIDE_FULL_TETR4N)
+def test_is_inside_Tetr4n_full(p1_coord, p2_coord, p3_coord):
+    nodes = np.array(
+        [[1, 0.0, 0.0, 0.0], [2, 1.0, 0.0, 0.0], [3, 0.0, 1.0, 0.0], [4, 0.0, 0.0, 1.0]]
+    )
+    elements = [[1, "Tetr4n", 1, 1, (1, 2, 3, 4)]]
+
+    p1 = np.array(p1_coord)
+    p2 = np.array(p2_coord)
+    p3 = np.array(p3_coord)
+
+    ls = LevelSet()
+    ls.gen_from_plane(nodes, p1, p2, p3, embedded=False)
+    cut = ls.is_cut(elements[0])[0]
+    assert CutType.CUT == cut, f"Failed with type: {cut} p1:{p1} p2:{p2}"

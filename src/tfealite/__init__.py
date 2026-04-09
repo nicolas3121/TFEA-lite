@@ -1,6 +1,11 @@
 from .FEModel import FEModel
 from .XFEModel import XFEModel
-from .core.model import gen_ibeam_Tetr4n, gen_rect_Quad4n, gen_rect_Tri3n
+from .core.model import (
+    gen_ibeam_Tetr4n,
+    gen_rect_Quad4n,
+    gen_rect_Tri3n,
+    gen_rect_Tetr4n,
+)
 from .elements.Tri3n import Tri3n
 from .elements.Quad4n import Quad4n
 from .elements.XQuad4n import XQuad4n
@@ -15,6 +20,7 @@ __all__ = [
     "gen_ibeam_Tetr4n",
     "gen_rect_Quad4n",
     "gen_rect_Tri3n",
+    "gen_rect_Tetr4n",
     "DofType",
     "IS_2D",
     "IS_3D",
