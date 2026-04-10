@@ -105,3 +105,19 @@ class Tetr4n:
         strain = B @ Ue
         stress = D @ strain
         return stress
+
+    def stresses_at_nodes(self, Ue):
+        Ue = np.asarray(Ue, dtype=float)
+        if Ue.ndim == 2:
+            Ue = Ue.reshape(
+                12,
+            )
+        elif Ue.ndim == 1 and Ue.size == 12:
+            pass
+        else:
+            raise ValueError(f"Ue must be (4,3) or (12,), got shape {Ue.shape}")
+        B = self.strain_displacement_matrix()
+        D = self.cal_D(self.material["E"], self.material["nu"])
+        strain = B @ Ue
+        stress = D @ strain
+        return stress

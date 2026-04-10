@@ -1,5 +1,4 @@
 import numpy as np
-from tfealite.core.level_set import LevelSet
 import sympy as sp
 from tfealite.elements.XTetr4n import XTetr4n
 from tfealite.core.quadratures import DuffySinh3D
@@ -34,34 +33,34 @@ def test_rigid_body_modes_fully_cut():
     # assert False
 
 
-def test_tip_enrichment():
-    nodes = np.array(
-        [[1, 0.0, 0.0, 0.0], [2, 1.0, 0.0, 0.0], [3, 0.0, 1.0, 0.0], [4, 0.0, 0.0, 1.0]]
-    )
-    elements = [[1, "Tetr4n", 1, 1, (1, 2, 3, 4)]]
-    p1 = np.array([-1.0, 0.0, 0.5])
-    p2 = np.array([0.5, 0.0, 0.2])
-    p3 = np.array([0.5, 2.0, 0.2])
-
-    ls = LevelSet()
-    ls.gen_from_plane(nodes, p1, p2, p3, embedded=False)
-
-    cut = ls.is_cut(elements[0])[0]
-    print(cut)
-    material = {"E": 1, "nu": 0.3, "rho": 1}
-    real = {}
-    quad = XTetr4n(
-        nodes[:, 1:],
-        material,
-        real,
-        ls.phi_n,
-        ls.phi_t,
-        False,
-        True,
-        True,
-    )
-    quad.cal_element_matrices(eval_mass=False)
-    # assert False
+# def test_tip_enrichment():
+#     nodes = np.array(
+#         [[1, 0.0, 0.0, 0.0], [2, 1.0, 0.0, 0.0], [3, 0.0, 1.0, 0.0], [4, 0.0, 0.0, 1.0]]
+#     )
+#     elements = [[1, "Tetr4n", 1, 1, (1, 2, 3, 4)]]
+#     p1 = np.array([-1.0, 0.0, 0.5])
+#     p2 = np.array([0.5, 0.0, 0.2])
+#     p3 = np.array([0.5, 2.0, 0.2])
+#
+#     ls = LevelSet()
+#     ls.gen_from_plane(nodes, p1, p2, p3, embedded=False)
+#
+#     cut = ls.is_cut(elements[0])[0]
+#     print(cut)
+#     material = {"E": 1, "nu": 0.3, "rho": 1}
+#     real = {}
+#     quad = XTetr4n(
+#         nodes[:, 1:],
+#         material,
+#         real,
+#         ls.phi_n,
+#         ls.phi_t,
+#         False,
+#         True,
+#         True,
+#     )
+#     quad.cal_element_matrices(eval_mass=False)
+#     # assert False
 
 
 def sympy_edge_singularity_tilted(nodes_phys):

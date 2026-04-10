@@ -94,12 +94,12 @@ class XTetr4n(Tetr4n):
         return N, dN_dxi[None, :, :]
 
     def _cal_intersections(self):
-        phi_n1 = self.phi_n[self.num_edges]
-        phi_n2 = self.phi_n[self.denom_edges]
-        num = phi_n1
-        denom = num - phi_n2
+        phi_num = self.phi_n[self.num_edges]
+        phi_denom = self.phi_n[self.denom_edges]
+        num = phi_num
+        denom = phi_num - phi_denom
         unsolvable = np.isclose(denom, 0)
-        on_crack = np.isclose(denom, 0)
+        on_crack = np.isclose(phi_denom, 0)
         N1 = np.clip(
             np.divide(
                 num,
@@ -118,18 +118,23 @@ class XTetr4n(Tetr4n):
                 [0, 0, 1 - N1[2], 0, 1 - N1[4], 1 - N1[5]],
             ]
         )
-        phi_n12 = N1 * phi_n2 + (1 - N1) * phi_n1
+        phi_n12 = N1 * phi_denom + (1 - N1) * phi_num
         on_interface = np.isclose(phi_n12, 0.0, atol=1e-12)
-        kappa = np.sum(on_interface[None, :] * Nc, axis=1) / np.sum(on_interface)
+        if not np.any(on_interface):
+            kappa = None
+        else:
+            kappa = np.sum(on_interface[None, :] * Nc, axis=1) / np.sum(on_interface)
         return Nc, kappa
 
     def _cal_front_intersections(self):
+        # print("nodes", self.node_coords)
         tip = np.empty((4, 4))
         tip_on_interface = [True, True, True, True]
         B = np.array([0, 0, 1])
         for j in range(4):
             tip[j, j] = 0
             i, r, g = (j + 1) % 4, (j + 2) % 4, (j + 3) % 4
+            # print("face", i, r, g)
             phi_n_face = self.phi_n[[i, r, g]]
             phi_t_face = self.phi_t[[i, r, g]]
 
@@ -164,7 +169,8 @@ class XTetr4n(Tetr4n):
                     ]
                 )
                 phi_n12 = N1 * phi_n_face + (1 - N1) * num
-                on_interface = np.isclose(phi_n12, 0.0, 1e-12)
+                on_interface = np.isclose(phi_n12, 0.0, atol=1e-12)
+                # print("on_interface", on_interface)
                 if not np.any(on_interface):
                     cj = np.full(3, 1 / 3)
                     tip_on_interface[j] = False
@@ -203,7 +209,7 @@ class XTetr4n(Tetr4n):
         elif self.h_enrich:
             Nc, kappa = self._cal_intersections()
             if self.t_enrich:
-                rule, correction = qd.TRI_RULES[13]
+                rule, correction = qd.TETR_RULES[13]
             else:
                 rule, correction = qd.TETR_RULES[2]
             for Ni, detJi in cut_embedding_tetr_iter(Nc, kappa):
@@ -221,8 +227,7 @@ class XTetr4n(Tetr4n):
             (rule, correction) = qd.TETR_RULES[13]
             nat_coords = rule[:, :3]
 
-            _, dN_dxi = self.shape_functions(nat_coords)
-            # dN_dxy = np.linalg.solve(J, dN_dxi)
+            _, dN_dxi = self.shape_functions(nat_coords.T)
             dN_dxy = J_inv @ dN_dxi
             B = cal_B_3d_vec(dN_dxy)
             w_eff = rule[:, 3] * correction * detJ
@@ -262,7 +267,9 @@ class XTetr4n(Tetr4n):
                 axis=0,
             )
 
-            rule_d = duffy.transform(rule[:, :3].T, beta1=2, beta2=n_on_interface)
+            rule_d = duffy.transform(
+                rule[:, :3].T, beta1=2, beta2=min(n_on_interface, 2)
+            )
             nat_coords_d = rule_d[:3]
             w_d = rule_d[3]
             n, _ = self._base_shape_functions(nat_coords_d)
@@ -277,8 +284,22 @@ class XTetr4n(Tetr4n):
             )
             Ke[0:begin_tip, begin_tip:] += res
             Ke[begin_tip:, 0:begin_tip] += res.T
+        # print("w_eff tot split", w_eff_tot)
 
     def shape_functions(self, natural_coordinate):
         return enriched_shape_functions(
             self, self._base_shape_functions, None, natural_coordinate
         )
+
+    def cal_stresses(self, nat_coords, Ue):
+        Ue = np.asanyarray(Ue, dtype=float).ravel()
+        x_e = self.node_coords
+        _, dN_dxi = self.shape_functions(nat_coords)
+        J = dN_dxi[0, :, : self.N_FN] @ x_e
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+
+        B = cal_B_3d_vec(dN_dxy)
+        D = self.cal_D()
+        eps = B @ Ue
+        sig = D @ eps[:, :, None]
+        return sig

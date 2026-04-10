@@ -34,6 +34,14 @@ class XFEModel(FEModel):
             self.in_range = np.ones(self.n_nodes, dtype=np.int32)
 
     def gen_list_dof(self, dof_per_node):
+        if dof_per_node == dofs.IS_2D:
+            IS_BRANCH = dofs.IS_2D_BRANCH
+            IS_HEAVISIDE = dofs.IS_2D_HEAVISIDE
+        elif dof_per_node == dofs.IS_3D:
+            IS_BRANCH = dofs.IS_3D_BRANCH
+            IS_HEAVISIDE = dofs.IS_3D_HEAVISIDE
+        else:
+            raise NotImplementedError
         self.dof_per_node = dof_per_node
         model.gen_list_dof(self, dof_per_node)
         assert self.list_dof is not None
@@ -53,7 +61,7 @@ class XFEModel(FEModel):
                             self.ls[nodes - 1] = i
                             self.tip[nodes - 1] = tip
                             self.cut_info[id] = (i, cut_type, tip)
-                            self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                            self.list_dof.add_dofs(nodes, IS_BRANCH)
                             if self.corrected:
                                 self.in_range[nodes - 1] = 1
                     else:
@@ -75,15 +83,14 @@ class XFEModel(FEModel):
                         #     np.array_repr(phi_t),
                         # )
 
-                        self.list_dof.add_dofs(filtered, dofs.IS_2D_HEAVISIDE)
+                        self.list_dof.add_dofs(filtered, IS_HEAVISIDE)
                         if self.tip_enrichment:
                             is_in_range, tip, in_range = ls.in_range(
                                 elem, self.geometrical_range
                             )
                             if is_in_range:
-                                # print("tip_enriched")
                                 self.tip[nodes - 1] = tip
-                                self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                                self.list_dof.add_dofs(nodes, IS_BRANCH)
                                 if self.corrected:
                                     self.in_range[nodes - 1] = in_range
                         self.ls[nodes - 1] = i
@@ -96,7 +103,7 @@ class XFEModel(FEModel):
                         if is_in_range:
                             self.tip[nodes - 1] = tip
                             self.ls[nodes - 1] = i
-                            self.list_dof.add_dofs(nodes, dofs.IS_2D_BRANCH)
+                            self.list_dof.add_dofs(nodes, IS_BRANCH)
                             self.cut_info[id] = (i, CutType.NONE, tip)
                             if self.corrected:
                                 self.in_range[nodes - 1] = in_range
@@ -109,7 +116,7 @@ class XFEModel(FEModel):
                 nodes = np.asarray(nodes)
                 self.tip[nodes - 1] = tip
                 self.ls[nodes - 1] = i
-                self.list_dof.remove_dofs(nodes, dofs.IS_2D_HEAVISIDE)
+                self.list_dof.remove_dofs(nodes, IS_HEAVISIDE)
 
         self.list_dof.update()
 
@@ -139,4 +146,9 @@ class XFEModel(FEModel):
             embedded=embedded,
             snapping_tolerance=snapping_tolerance,
         )
+        self.level_sets.append(ls)
+
+    def insert_planar_crack_segment(self, p1, p2, p3, embedded):
+        ls = LevelSet()
+        ls.gen_from_plane(self.nodes, p1, p2, p3, embedded)
         self.level_sets.append(ls)

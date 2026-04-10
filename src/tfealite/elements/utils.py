@@ -64,43 +64,46 @@ def cut_embedding_tetr_iter(Nc, kappa, range_iter=range(12)):
     # -1 --> use kappa
     TET_SPLIT_MAP = [
         # Group 1: 4 Corner Tets
-        (0, 0, 3, 4),  # 0, 01, 02, 03
-        (1, 1, 5, 0),  # 1, 12, 13, 10
-        (2, 2, 3, 1),  # 2, 23, 20, 21
-        (3, 4, 5, 2),  # 3, 30, 31, 32
+        (0, 0, 3, 4),
+        (1, 1, 5, 0),
+        (2, 2, 3, 1),
+        (3, 4, 5, 2),
         # Group 2: 4 Inner Tets (Kappa connecting to the corner faces)
-        (-1, 0, 3, 4),  # 0, 01, 02, 03
-        (-1, 1, 0, 5),  # 1, 12, 10, 13
-        (-1, 2, 1, 3),  # 2, 23, 21, 20
-        (-1, 4, 5, 2),  # 3, 30, 31, 32
+        (-1, 0, 4, 3),
+        (-1, 1, 0, 5),
+        (-1, 2, 1, 3),
+        (-1, 4, 2, 5),
         # Group 3: 4 Face Tets (Kappa connecting to the outer faces)
-        (-1, 0, 1, 3),  # kappa, 01, 12, 20
-        (-1, 1, 5, 2),  # kappa, 12, 31, 23
-        (-1, 2, 3, 4),  # kappa, 23, 02, 30
-        (-1, 4, 5, 0),  # kappa, 30, 13, 01
+        (-1, 0, 3, 1),
+        (-1, 1, 5, 2),
+        (-1, 2, 3, 4),
+        (-1, 4, 5, 0),
     ]
 
-    for i in range_iter:
-        node_idx, e1, e2, e3 = TET_SPLIT_MAP[i]
-        Ni = np.empty((4, 4))
+    if kappa is None:
+        yield eye, 1.0
+    else:
+        for i in range_iter:
+            node_idx, e1, e2, e3 = TET_SPLIT_MAP[i]
+            Ni = np.empty((4, 4))
 
-        col = i % 4
+            col = i % 4
 
-        if node_idx != -1:
-            Ni[:, col] = eye[:, node_idx]
-        else:
-            Ni[:, col] = kappa
+            if node_idx != -1:
+                Ni[:, col] = eye[:, node_idx]
+            else:
+                Ni[:, col] = kappa
 
-        Ni[:, (col + 1) % 4] = Nc[:, e1]
-        Ni[:, (col + 2) % 4] = Nc[:, e2]
-        Ni[:, (col + 3) % 4] = Nc[:, e3]
+            Ni[:, (col + 1) % 4] = Nc[:, e1]
+            Ni[:, (col + 2) % 4] = Nc[:, e2]
+            Ni[:, (col + 3) % 4] = Nc[:, e3]
 
-        detJi = np.linalg.det(Ni)
-        if detJi < 0:
-            print(i, detJi, "|", node_idx, e1, e2, e3)
+            detJi = np.linalg.det(Ni)
 
-        if not np.isclose(detJi, 0.0, atol=1e-12):
-            yield Ni, detJi
+            if not np.isclose(detJi, 0.0, atol=1e-12):
+                if detJi < 0:
+                    print(i, detJi, "|", node_idx, e1, e2, e3)
+                yield Ni, detJi
 
 
 def partial_cut_embedding_tetr_iter(Nc, tip, tip_on_interface, range_iter=range(17)):
