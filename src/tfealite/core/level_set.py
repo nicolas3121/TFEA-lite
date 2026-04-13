@@ -21,6 +21,7 @@ class LevelSet:
         self.phi_n = None
         self.phi_t = None
         self.phi_t2 = None
+        self.phi_t_list = []
         self.mesh_tree = None
         self.bspline = None
         self.dbspline = None
@@ -123,25 +124,7 @@ class LevelSet:
 
         u_range = np.linspace(0, 1, 10000)
         u_i = u_range[KDTree(bspline(u_range)).query(nodes_subset)[1]]
-        # print("u_i_initial", u_i[locations])
 
-        # for i in range(100):
-        #     S = bspline(u_i)
-        #     dS = dbspline(u_i)
-        #     ddS = ddbspline(u_i)
-        #     distance = S - nodes_subset
-        #     f = np.sum(dS * distance, axis=1)
-        #     df = np.sum(ddS * distance, axis=1) + np.sum(dS * dS, axis=1)
-        #     du = f / df
-        #     pushing_past_1 = (u_i == 1.0) & (f < 0)
-        #     pushing_past_0 = (u_i == 0.0) & (f > 0)
-        #     # print("u_i", u_i[locations], "du", du[locations])
-        #     u_i_next = np.clip(u_i - du, 0.0, 1.0)
-        #     u_i_next = np.where(pushing_past_1 | pushing_past_0, u_i, u_i_next)
-        #     if np.all(np.isclose(u_i, u_i_next, atol=1e-15)):
-        #         break
-        #     elif i == 99:
-        #         raise ValueError("newton iterations didn't converge")
         for i in range(1000):
             S = bspline(u_i)
             dS = dbspline(u_i)
@@ -242,6 +225,302 @@ class LevelSet:
         self.phi_n = phi_n
         self.phi_t = phi_t
         self.t = t1
+
+    def gen_from_ndbsplines(
+        self,
+        nodes,
+        ndbsplines,
+        h,
+        geometrical_range,
+        snapping_tolerance=0.03,
+    ):
+        geometrical_range = max(3 * h, 3 * geometrical_range)
+        coordinates = np.asarray(nodes)[:, 1:4]
+        self.mesh_tree = KDTree(coordinates)
+        self.ndbsplines = ndbsplines
+
+        phi_n = np.full(coordinates.shape[0], np.nan, dtype=np.float64)
+        projections = np.full_like(coordinates, np.nan, dtype=np.float64)
+        for ndbspline in ndbsplines:
+            num_u_points = max(100, 3 * ndbspline.c.shape[0])
+            num_v_points = max(100, 3 * ndbspline.c.shape[0])
+            narrow_band_mask = get_narrow_band_mask_3d(
+                coordinates,
+                ndbspline,
+                num_segments_u=3 * ndbspline.c.shape[0],
+                num_segments_v=3 * ndbspline.c.shape[1],
+                padding=2 * h,
+            )
+            num_u_points = max(100, 3 * ndbspline.c.shape[0])
+            num_v_points = max(100, 3 * ndbspline.c.shape[1])
+
+            u_range = np.linspace(0, 1, num_u_points)
+            v_range = np.linspace(0, 1, num_v_points)
+            U, V = np.meshgrid(u_range, v_range, indexing="ij")
+            uv_pts = np.column_stack((U.ravel(), V.ravel()))
+            surf_pts = ndbspline(uv_pts)
+
+            surface_tree = KDTree(surf_pts)
+
+            uv_tip = np.stack([np.ones_like(v_range), v_range], axis=1)
+            tip_pts = ndbspline(uv_tip)
+
+            tip_tree = KDTree(tip_pts)
+
+            indices_near_tip_list = self.mesh_tree.query_ball_point(
+                tip_pts,
+                geometrical_range,
+            )
+
+            indices_near_tip = np.unique(
+                np.concatenate(indices_near_tip_list, dtype=int)
+            )
+
+            narrow_band_mask[indices_near_tip] = True
+
+            narrow_band_coords = coordinates[narrow_band_mask]
+
+            _, closest_indices = surface_tree.query(narrow_band_coords, k=1)
+            uv_i = uv_pts[closest_indices]
+            nodes_subset = coordinates[narrow_band_mask]
+
+            for i in range(1000):
+                S = ndbspline(uv_i)
+                Su = ndbspline(uv_i, nu=(1, 0))
+                Sv = ndbspline(uv_i, nu=(0, 1))
+                Suu = ndbspline(uv_i, nu=(2, 0))
+                Svv = ndbspline(uv_i, nu=(0, 2))
+                Suv = ndbspline(uv_i, nu=(1, 1))
+
+                distance = S - nodes_subset
+
+                F1 = np.sum(Su * distance, axis=1)
+                F2 = np.sum(Sv * distance, axis=1)
+
+                # Precompute dot products for the Hessian
+                Su_dot_Su = np.sum(Su * Su, axis=1)
+                Sv_dot_Sv = np.sum(Sv * Sv, axis=1)
+                Su_dot_Sv = np.sum(Su * Sv, axis=1)
+
+                # 3. True Hessian Matrix Components (J11, J12, J22)
+                J11 = np.sum(Suu * distance, axis=1) + Su_dot_Su
+                J12 = (
+                    np.sum(Suv * distance, axis=1) + Su_dot_Sv
+                )  # Symmetric (J21 = J12)
+                J22 = np.sum(Svv * distance, axis=1) + Sv_dot_Sv
+
+                det_J = (J11 * J22) - (J12 * J12)
+
+                # 4. MULTIVARIATE HESSIAN SAFEGUARD
+                # A 2x2 Hessian is positive definite (convex) if J11 > 0 AND det_J > 0.
+                # If the surface is locally concave relative to the point, we fall back to Gauss-Newton.
+                bad_hessian = (J11 < 1e-12) | (det_J < 1e-12)
+
+                J11 = np.where(bad_hessian, Su_dot_Su, J11)
+                J22 = np.where(bad_hessian, Sv_dot_Sv, J22)
+                J12 = np.where(bad_hessian, Su_dot_Sv, J12)
+
+                # Recalculate determinant for the Gauss-Newton fallback
+                det_J = np.maximum(
+                    (J11 * J22) - (J12 * J12), 1e-14
+                )  # Prevent ZeroDivision
+
+                # 5. Compute the Newton Steps (Analytic 2x2 Inverse)
+                du = (J22 * F1 - J12 * F2) / det_J
+                dv = (-J12 * F1 + J11 * F2) / det_J
+
+                uv_next = np.clip(uv_i - np.column_stack((du, dv)), 0.0, 1.0)
+
+                # 6. BOUNDARY LOCKS (Active Set Phase 1)
+                # Check if nodes are pushing past boundaries
+                pushing_u_1 = (uv_i[:, 0] == 1.0) & (F1 < 0)
+                pushing_u_0 = (uv_i[:, 0] == 0.0) & (F1 > 0)
+                u_caught = pushing_u_1 | pushing_u_0
+
+                pushing_v_1 = (uv_i[:, 1] == 1.0) & (F2 < 0)
+                pushing_v_0 = (uv_i[:, 1] == 0.0) & (F2 > 0)
+                v_caught = pushing_v_1 | pushing_v_0
+
+                caught = u_caught | v_caught
+
+                uv_next[:, 1] = np.where(v_caught, uv_i[:, 1], uv_next[:, 1])
+
+                uv_next = np.where(caught[:, None], uv_i, uv_next)
+
+                # 7. Check Convergence
+                if np.all(np.isclose(uv_i, uv_next, atol=1e-12)):
+                    break
+                elif i == 999:
+                    bad_mask = ~np.all(np.isclose(uv_i, uv_next, atol=1e-15), axis=1)
+                    print(f"Failed to converge at nodes: {np.where(bad_mask)[0]}")
+                    print(uv_i[bad_mask])
+                    print("coordinates")
+                    print(nodes_subset[bad_mask])
+                    raise ValueError("3D Newton iterations didn't converge")
+
+                uv_i = uv_next
+
+            linesearch_mask = uv_i[:, 0] == 1.0
+            nodes_subset_linesearch = nodes_subset[linesearch_mask]
+            uv_i_subset = uv_i[linesearch_mask]
+
+            for i in range(1000):
+                S = ndbspline(uv_i_subset)
+                dS = ndbspline(uv_i_subset, nu=(0, 1))
+                ddS = ndbspline(uv_i_subset, nu=(0, 2))
+
+                distance = S - nodes_subset_linesearch
+
+                f = np.sum(dS * distance, axis=1)
+                df = np.sum(ddS * distance, axis=1) + np.sum(dS * dS, axis=1)
+
+                df_gn = np.sum(dS * dS, axis=1)
+                df = np.where(df < 1e-12, df_gn, df)
+
+                dv = f / df
+
+                pushing_past_1 = (uv_i_subset[:, 1] == 1.0) & (f < 0)
+                pushing_past_0 = (uv_i_subset[:, 1] == 0.0) & (f > 0)
+
+                uv_i_next = np.clip(uv_i_subset[:, 1] - dv, 0.0, 1.0)
+
+                uv_i_next = np.where(
+                    pushing_past_1 | pushing_past_0, uv_i_subset[:, 1], uv_i_next
+                )
+
+                # print(uv_i_next[~np.isclose(uv_i[:, 1], uv_i_next, atol=1e-12)])
+
+                if np.all(np.isclose(uv_i_subset[:, 1], uv_i_next, atol=1e-12)):
+                    break
+                elif i == 999:
+                    bad_mask = ~np.isclose(uv_i_subset[:, 1], uv_i_next, atol=1e-12)
+                    print(f"Failed at v_i: {uv_i_subset[bad_mask, :]}")
+                    # print(nodes_subset[bad_mask])
+                    raise ValueError("Newton iterations didn't converge")
+
+                uv_i_subset[:, 1] = uv_i_next
+            uv_i[linesearch_mask] = uv_i_subset
+
+            linesearch_mask = (uv_i[:, 1] == 1.0) | (uv_i[:, 1] == 0.0)
+            nodes_subset_linesearch = nodes_subset[linesearch_mask]
+            uv_i_subset = uv_i[linesearch_mask]
+
+            for i in range(1000):
+                S = ndbspline(uv_i_subset)
+                dS = ndbspline(uv_i_subset, nu=(1, 0))
+                ddS = ndbspline(uv_i_subset, nu=(2, 0))
+
+                distance = S - nodes_subset_linesearch
+
+                f = np.sum(dS * distance, axis=1)
+                df = np.sum(ddS * distance, axis=1) + np.sum(dS * dS, axis=1)
+
+                df_gn = np.sum(dS * dS, axis=1)
+                df = np.where(df < 1e-12, df_gn, df)
+
+                dv = f / df
+
+                pushing_past_1 = (uv_i_subset[:, 0] == 1.0) & (f < 0)
+                pushing_past_0 = (uv_i_subset[:, 0] == 0.0) & (f > 0)
+
+                uv_i_next = np.clip(uv_i_subset[:, 0] - dv, 0.0, 1.0)
+
+                uv_i_next = np.where(
+                    pushing_past_1 | pushing_past_0, uv_i_subset[:, 0], uv_i_next
+                )
+
+                # print(uv_i_next[~np.isclose(uv_i[:, 1], uv_i_next, atol=1e-12)])
+
+                if np.all(np.isclose(uv_i_subset[:, 0], uv_i_next, atol=1e-12)):
+                    break
+                elif i == 999:
+                    bad_mask = ~np.isclose(uv_i_subset[:, 0], uv_i_next, atol=1e-12)
+                    print(f"Failed at v_i: {uv_i_subset[bad_mask, :]}")
+                    # print(nodes_subset[bad_mask])
+                    raise ValueError("Newton iterations didn't converge")
+
+                uv_i_subset[:, 0] = uv_i_next
+            uv_i[linesearch_mask] = uv_i_subset
+            # print(uv_i)
+            S = ndbspline(uv_i)
+            Su = ndbspline(uv_i, nu=(1, 0))
+            Sv = ndbspline(uv_i, nu=(0, 1))
+            n = np.cross(Su, Sv, axis=1)
+
+            n = n / np.linalg.norm(n, axis=1)[:, None]
+            distance = nodes_subset - S
+            phi_n_subset = np.sum(n * distance, axis=1)
+            current_phi_n_subset = phi_n[narrow_band_mask]
+            to_update = np.where(
+                np.isnan(current_phi_n_subset)
+                | (np.abs(current_phi_n_subset) > np.abs(phi_n_subset))
+            )[0]
+
+            # 2. Get the global indices of ALL nodes in the narrow band
+            # np.nonzero converts the boolean mask into an array of integer indices
+            global_narrow_indices = np.nonzero(narrow_band_mask)[0]
+
+            # 3. Map the local 'to_update' indices to their actual global index
+            global_update_indices = global_narrow_indices[to_update]
+
+            # 4. Perform a direct, single-step update on the global arrays
+            projections[global_update_indices] = S[to_update]
+            phi_n[global_update_indices] = phi_n_subset[to_update]
+
+            near_tip_mask = np.zeros_like(narrow_band_mask, dtype=bool)
+            near_tip_mask[narrow_band_mask][uv_i[:, 0] > 0.999] = True
+            near_tip_mask[indices_near_tip] = True
+
+            # near_tip_projections = projections[near_tip_mask]
+            near_tip_projections = coordinates[near_tip_mask]
+            # print(near_tip_projections)
+            _, closest_indices = tip_tree.query(near_tip_projections, k=1)
+            v_i = uv_tip[closest_indices]
+            # nog een newton raphson om op crack front te projecteren
+            # als tip niet actief is voor alle nodes die voor tip liggen phi_n terug nan maken
+            # tijdelijke phi_n per surface maken zodat dit eerst uitgevoerd kan worden voor uiteindelijk naar echte phi_n geschreven wordt
+            for i in range(1000):
+                S = ndbspline(v_i)
+                dS = ndbspline(v_i, nu=(0, 1))
+                ddS = ndbspline(v_i, nu=(0, 2))
+
+                distance = S - near_tip_projections
+
+                f = np.sum(dS * distance, axis=1)
+                df = np.sum(ddS * distance, axis=1) + np.sum(dS * dS, axis=1)
+
+                df_gn = np.sum(dS * dS, axis=1)
+                df = np.where(df < 1e-12, df_gn, df)
+
+                dv = f / df
+
+                pushing_past_1 = (v_i[:, 1] == 1.0) & (f < 0)
+                pushing_past_0 = (v_i[:, 1] == 0.0) & (f > 0)
+
+                v_i_next = np.clip(v_i[:, 1] - dv, 0.0, 1.0)
+
+                v_i_next = np.where(
+                    pushing_past_1 | pushing_past_0, v_i[:, 1], v_i_next
+                )
+
+                if np.all(np.isclose(v_i[:, 1], v_i_next, atol=1e-15)):
+                    break
+                elif i == 999:
+                    bad_mask = ~np.isclose(v_i[:, 1], v_i_next, atol=1e-15)
+                    print(f"Failed at u_i: {v_i[bad_mask, 1]}")
+                    raise ValueError("Newton iterations didn't converge")
+
+                v_i[:, 1] = v_i_next
+            S = ndbspline(v_i)
+            Su = ndbspline(v_i, nu=(1, 0))
+            t = Su / np.linalg.norm(Su, axis=1)[:, None]
+            distance = near_tip_projections - S
+            phi_t_subset = np.sum(t * distance, axis=1)
+            temp_phi_t = np.full_like(phi_n, np.nan, dtype=np.float64)
+            temp_phi_t[near_tip_mask] = phi_t_subset
+            self.phi_t = temp_phi_t
+            self.phi_n = phi_n
+            # self.phi_t_list.append(temp_phi_t)
 
     def get(self, nodes, tip):
         assert self.phi_n is not None
@@ -375,3 +654,38 @@ def get_narrow_band_indices(nodes, bspline, num_segments, padding):
     narrow_band_indices = np.where(is_narrow_band)[0]
 
     return narrow_band_indices
+
+
+def get_narrow_band_mask_3d(nodes, ndbspline, num_segments_u, num_segments_v, padding):
+    u = np.linspace(0.0, 1.0, num_segments_u + 1)
+    v = np.linspace(0.0, 1.0, num_segments_v + 1)
+    U, V = np.meshgrid(u, v, indexing="ij")
+
+    uv_pts = np.column_stack((U.ravel(), V.ravel()))
+    surf_pts = ndbspline(uv_pts).reshape((num_segments_u + 1, num_segments_v + 1, 3))
+
+    p00 = surf_pts[:-1, :-1, :]
+    p10 = surf_pts[1:, :-1, :]
+    p01 = surf_pts[:-1, 1:, :]
+    p11 = surf_pts[1:, 1:, :]
+
+    min_coords = np.minimum.reduce([p00, p10, p01, p11]).reshape(-1, 3) - padding
+    max_coords = np.maximum.reduce([p00, p10, p01, p11]).reshape(-1, 3) + padding
+
+    num_patches = num_segments_u * num_segments_v
+
+    is_narrow_band = np.zeros(len(nodes), dtype=bool)
+
+    for p in range(num_patches):
+        in_box = (
+            (nodes[:, 0] >= min_coords[p, 0])
+            & (nodes[:, 0] <= max_coords[p, 0])
+            & (nodes[:, 1] >= min_coords[p, 1])
+            & (nodes[:, 1] <= max_coords[p, 1])
+            & (nodes[:, 2] >= min_coords[p, 2])
+            & (nodes[:, 2] <= max_coords[p, 2])
+        )
+
+        is_narrow_band |= in_box
+
+    return is_narrow_band

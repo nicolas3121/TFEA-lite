@@ -1,13 +1,18 @@
 import tfealite as tf
+from tfealite.core.surfaces import (
+    init_half_coin_crack_geomdl,
+    geomdl_to_NdBSplines,
+)
+from tfealite.core.level_set import LevelSet
+import numpy as np
 from tfealite.visualization.build_mesh import (
     my_build_Tetr4n,
     build_XTetr4n,
 )
-import numpy as np
 import pyvista as pv
 
 # %% Model creation
-nodes, elements = tf.gen_rect_Tetr4n(L=1.0, H=1.0, D=1.0, nx=10, ny=10, nz=10)
+nodes, elements = tf.gen_rect_Tetr4n(L=1.0, H=1.0, D=1.0, nx=20, ny=20, nz=20)
 materials = [[1, {"E": 2e11, "nu": 0.33, "rho": 7850}]]
 reals = [[1, {}]]
 model = tf.XFEModel(
@@ -16,13 +21,30 @@ model = tf.XFEModel(
     materials,
     reals,
     tip_enrichment=True,
-    geometrical_range=0.2,
+    geometrical_range=0.1,
     corrected=True,
 )
-p1 = np.array([-0.1, 0.0, 0.5])
-p2 = np.array([0.5, 0.0, 0.5])
-p3 = np.array([0.5, 1.3, 0.5])
-model.insert_planar_crack_segment(p1, p2, p3, embedded=False)
+# model.show()
+
+
+theta = np.pi / 7
+rotation = np.array(
+    [[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]]
+)
+geomdl_crack = init_half_coin_crack_geomdl(
+    0.3, rotation=rotation, translation=np.array([0.5, 0, 0.43])
+)
+scipy_crack = geomdl_to_NdBSplines(geomdl_crack)
+test_coords = np.array([[1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
+print("test_coords", scipy_crack[0](test_coords, nu=(1, 0)))
+test_coords = np.array([[1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
+print("test_coords", scipy_crack[0](test_coords, nu=(0, 1)))
+
+ls = LevelSet()
+ls.gen_from_ndbsplines(nodes, scipy_crack, 0.4, 0.0)
+
+model.level_sets.append(ls)
+
 model.gen_list_dof(dof_per_node=tf.IS_3D)
 model.cal_global_matrices(tf.XTetr4n)
 
@@ -58,17 +80,3 @@ mesh1.remove_cells(ghosts, inplace=True)
 mesh2 = build_XTetr4n(model, mult=mult)
 blocks = pv.MultiBlock([mesh1, mesh2])
 blocks.plot(show_edges=True, color="lightblue")
-# vm_1 = mesh1.point_data["von_mises"]
-# vm_2 = mesh2.point_data["von_mises"]
-# all_vm = np.concatenate([vm_1, vm_2])
-# v_max = np.percentile(all_vm, 90)
-# pl = pv.Plotter()
-# pl.add_mesh(
-#     blocks,
-#     scalars="von_mises",  # The exact string key in your point_data dict
-#     cmap="turbo",  # A great colormap for stress fields (or use "jet", "viridis")
-#     show_edges=True,  # Shows the mesh grid (including your sub-triangulations!)
-#     clim=[0, v_max],
-#     scalar_bar_args={"title": "Von Mises Stress"},
-# )
-# pl.show()
