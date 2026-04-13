@@ -310,9 +310,9 @@ class LevelSet:
             ]
             distance_configs = [
                 (phi_t_u_0_v_i, phi_n_u_0_v_i, (1, 0), (0, 1), 1, 1),
-                (phi_t_u_i_v_0, phi_n_u_i_v_0, (0, 1), (1, 0), 1, -1),
-                (phi_t_u_i_v_1, phi_n_u_i_v_1, (0, 1), (1, 0), -1, -1),
-                (phi_t_u_1_v_i, phi_n_u_1_v_i, (1, 0), (0, 1), 1, 1),
+                (phi_t_u_i_v_0, phi_n_u_i_v_0, (0, 1), (1, 0), -1, -1),
+                (phi_t_u_i_v_1, phi_n_u_i_v_1, (0, 1), (1, 0), 1, -1),
+                (phi_t_u_1_v_i, phi_n_u_1_v_i, (1, 0), (0, 1), -1, 1),
             ]
 
             search_2d_exclusion_mask = np.zeros(u_i_v_0.shape[0], dtype=bool)
@@ -344,14 +344,17 @@ class LevelSet:
                 # print(o)
                 n = tangential_sign * np.cross(o, dS_t, axis=1)
                 n = n / np.linalg.norm(n, axis=1)[:, None]
+                print("n")
+                print(n)
                 # print("n")
                 # print(n)
                 distance = narrow_band_coords - S
 
-                edge_phi_t[:] = tangential_sign * np.sum(distance * n, axis=1)
+                edge_phi_t[:] = np.sum(distance * n, axis=1)
                 edge_phi_n[:] = np.sum(distance * o, axis=1)
 
                 is_outside = edge_phi_t >= 0
+                print("is_outside")
                 print(is_outside)
                 search_2d_exclusion_mask[is_outside] = True
                 local_phi_n[narrow_band_indices[is_outside]] = edge_phi_n[is_outside]
