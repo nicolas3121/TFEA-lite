@@ -42,7 +42,7 @@ def init_crack_plane_geomdl(
         surf.knotvector_v = utilities.generate_knot_vector(
             surf.degree_v, surf.ctrlpts_size_v
         )
-        surfaces.append(surf)
+        surfaces.append((True, False, surf))
 
     else:
         y1_vals = np.linspace(0, -length / 2.0, num_u_splines)
@@ -71,7 +71,7 @@ def init_crack_plane_geomdl(
             surf.knotvector_v = utilities.generate_knot_vector(
                 surf.degree_v, surf.ctrlpts_size_v
             )
-            surfaces.append(surf)
+            surfaces.append((True, False, surf))
 
     return surfaces
 
@@ -94,7 +94,7 @@ def init_half_coin_crack_geomdl(
 
     angles = np.linspace(0, np.pi, num_v_pts)
     radii = np.linspace(
-        1e-12, radius, num_u_splines
+        1e-6, radius, num_u_splines
     )  # tiny hole at center otherwise derivatives undefined there
     x_pts = np.cos(angles)[None, :] * radii[:, None]
     y_pts = np.sin(angles)[None, :] * radii[:, None]
@@ -108,11 +108,17 @@ def init_half_coin_crack_geomdl(
     surf.knotvector_u = utilities.generate_knot_vector(surf.degree_u, num_u_splines)
     surf.knotvector_v = utilities.generate_knot_vector(surf.degree_v, num_v_pts)
 
-    return [surf]
+    return [(True, True, surf)]
 
 
 def geomdl_to_NdBSplines(surfaces):
     return [
-        NdBSpline(t=(surf.knotvector_u, surf.knotvector_v), c=surf.ctrlpts2d, k=(2, 2))
-        for surf in surfaces
+        (
+            active,
+            has_pole,
+            NdBSpline(
+                t=(surf.knotvector_u, surf.knotvector_v), c=surf.ctrlpts2d, k=(2, 2)
+            ),
+        )
+        for (active, has_pole, surf) in surfaces
     ]

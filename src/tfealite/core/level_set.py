@@ -234,7 +234,7 @@ class LevelSet:
         geometrical_range,
         snapping_tolerance=0.03,
     ):
-        geometrical_range = max(3 * h, 3 * geometrical_range)
+        geometrical_range = max(4 * h, 4 * geometrical_range)
         coordinates = np.asarray(nodes)[:, 1:4]
         self.mesh_tree = KDTree(coordinates)
         self.ndbsplines = ndbsplines
@@ -261,138 +261,136 @@ class LevelSet:
             u_range = np.linspace(0, 1, num_u_points)
             v_range = np.linspace(0, 1, num_v_points)
 
-            edge_u_0 = np.stack([np.zeros_like(v_range), v_range], axis=1)
-            edge_u_0_tree = KDTree(ndbspline(edge_u_0))
             edge_u_1 = np.stack([np.ones_like(v_range), v_range], axis=1)
             edge_u_1_pts = ndbspline(edge_u_1)
-            edge_u_1_tree = KDTree(edge_u_1_pts)
-            edge_v_0 = np.stack([u_range, np.zeros_like(u_range)], axis=1)
-            edge_v_0_tree = KDTree(ndbspline(edge_v_0))
-            edge_v_1 = np.stack([u_range, np.ones_like(u_range)], axis=1)
-            edge_v_1_tree = KDTree(ndbspline(edge_v_1))
 
             indices_near_tip_list = self.mesh_tree.query_ball_point(
                 edge_u_1_pts,
                 geometrical_range,
             )
-
-            indices_near_tip = np.unique(
-                np.concatenate(indices_near_tip_list, dtype=int)
+            flattened_indices = np.concatenate(
+                [np.array(x, dtype=int) for x in indices_near_tip_list]
             )
 
-            near_tip_mask = np.zeros_like(narrow_band_mask)
-            near_tip_mask[indices_near_tip] = True
+            indices_near_tip = np.unique(flattened_indices)
 
             narrow_band_mask[indices_near_tip] = True
             narrow_band_indices = np.where(narrow_band_mask)[0]
 
             narrow_band_coords = coordinates[narrow_band_mask]
 
-            # Search along edges first to exclude nodes that can't be projected
-
-            u_0_v_i = edge_u_0[edge_u_0_tree.query(narrow_band_coords, k=1)[1]]
-            u_i_v_0 = edge_v_0[edge_v_0_tree.query(narrow_band_coords, k=1)[1]]
-            u_i_v_1 = edge_v_1[edge_v_1_tree.query(narrow_band_coords, k=1)[1]]
-            u_1_v_i = edge_u_1[edge_u_1_tree.query(narrow_band_coords, k=1)[1]]
-            phi_t_u_0_v_i = np.full(narrow_band_coords.shape[0], np.nan)
-            phi_t_u_i_v_0 = np.full(narrow_band_coords.shape[0], np.nan)
-            phi_t_u_i_v_1 = np.full(narrow_band_coords.shape[0], np.nan)
-            phi_t_u_1_v_i = np.full(narrow_band_coords.shape[0], np.nan)
-            phi_n_u_0_v_i = np.full(narrow_band_coords.shape[0], np.nan)
-            phi_n_u_i_v_0 = np.full(narrow_band_coords.shape[0], np.nan)
-            phi_n_u_i_v_1 = np.full(narrow_band_coords.shape[0], np.nan)
-            phi_n_u_1_v_i = np.full(narrow_band_coords.shape[0], np.nan)
-            edge_configs = [
-                (u_0_v_i, 1, (0, 1), (0, 2), has_pole),  # Front Edge (Pole)
-                (u_i_v_0, 0, (1, 0), (2, 0), False),  # Right Base Edge
-                (u_i_v_1, 0, (1, 0), (2, 0), False),  # Left Base Edge
-                (u_1_v_i, 1, (0, 1), (0, 2), False),  # Crack Tip Curve
-            ]
-            distance_configs = [
-                (phi_t_u_0_v_i, phi_n_u_0_v_i, (1, 0), (0, 1), 1, 1),
-                (phi_t_u_i_v_0, phi_n_u_i_v_0, (0, 1), (1, 0), -1, -1),
-                (phi_t_u_i_v_1, phi_n_u_i_v_1, (0, 1), (1, 0), 1, -1),
-                (phi_t_u_1_v_i, phi_n_u_1_v_i, (1, 0), (0, 1), -1, 1),
-            ]
-
-            search_2d_exclusion_mask = np.zeros(u_i_v_0.shape[0], dtype=bool)
-
-            for (arr, col, nu1, nu2, skip), (
-                edge_phi_t,
-                edge_phi_n,
-                nu_n,
-                nu_t,
-                tangential_sign,
-                normal_sign,
-            ) in zip(edge_configs, distance_configs):
-                if not skip:  # bypass singular pole
-                    project_on_line(
-                        lambda a=arr: ndbspline(a),
-                        lambda a=arr, n=nu1: ndbspline(a, nu=n),
-                        lambda a=arr, n=nu2: ndbspline(a, nu=n),
-                        arr[:, col],
-                        narrow_band_coords,
-                    )
-
-                S = ndbspline(arr)
-                dS_n = ndbspline(arr, nu=nu_n)
-                dS_t = ndbspline(arr, nu=nu_t)
-
-                # print("o")
-                o = normal_sign * np.cross(dS_n, dS_t, axis=1)
-                o = o / np.linalg.norm(o, axis=1)[:, None]
-                # print(o)
-                n = tangential_sign * np.cross(o, dS_t, axis=1)
-                n = n / np.linalg.norm(n, axis=1)[:, None]
-                print("n")
-                print(n)
-                # print("n")
-                # print(n)
-                distance = narrow_band_coords - S
-
-                edge_phi_t[:] = np.sum(distance * n, axis=1)
-                edge_phi_n[:] = np.sum(distance * o, axis=1)
-
-                is_outside = edge_phi_t >= 0
-                print("is_outside")
-                print(is_outside)
-                search_2d_exclusion_mask[is_outside] = True
-                local_phi_n[narrow_band_indices[is_outside]] = edge_phi_n[is_outside]
-            print(search_2d_exclusion_mask)
-
             U, V = np.meshgrid(u_range, v_range, indexing="ij")
             uv_pts = np.column_stack((U.ravel(), V.ravel()))
             surf_pts = ndbspline(uv_pts)
 
             surface_tree = KDTree(surf_pts)
-            surface_uv_i = uv_pts[
-                surface_tree.query(narrow_band_coords[~search_2d_exclusion_mask], k=1)[
-                    1
-                ]
+            uv_i = uv_pts[surface_tree.query(narrow_band_coords, k=1)[1]]
+
+            project_on_surface(ndbspline, uv_i, narrow_band_coords)
+
+            edge_configs = [
+                (uv_i[:, 0] == 0.0, 1, (0, 1), (0, 2), has_pole),  # Front Edge (Pole)
+                (uv_i[:, 1] == 0.0, 0, (1, 0), (2, 0), False),  # Right Base Edge
+                (uv_i[:, 1] == 1.0, 0, (1, 0), (2, 0), False),  # Left Base Edge
+                (uv_i[:, 0] == 1.0, 1, (0, 1), (0, 2), False),  # Crack Tip Curve
             ]
-            surface_nodes_subset = narrow_band_coords[~search_2d_exclusion_mask]
-            project_on_surface(ndbspline, surface_uv_i, surface_nodes_subset)
-            S = ndbspline(surface_uv_i)
-            Su = ndbspline(surface_uv_i, nu=(1, 0))
-            Sv = ndbspline(surface_uv_i, nu=(0, 1))
 
-            n_raw = np.cross(Su, Sv)
-            n = n_raw / np.linalg.norm(n_raw, axis=1)[:, None]
+            for mask, col, nu1, nu2, skip in edge_configs:
+                if skip:  # bypass singular pole
+                    continue
+                arr = uv_i[mask, :]
+                project_on_line(
+                    lambda a=arr: ndbspline(a),
+                    lambda a=arr, n=nu1: ndbspline(a, nu=n),
+                    lambda a=arr, n=nu2: ndbspline(a, nu=n),
+                    arr[:, col],
+                    narrow_band_coords[mask],
+                )
+                uv_i[mask] = arr
 
-            distance = surface_nodes_subset - S
-            surface_phi_n = np.sum(distance * n, axis=1)
+            S = ndbspline(uv_i)
+            Su = ndbspline(uv_i, nu=(1, 0))
+            Sv = ndbspline(uv_i, nu=(0, 1))
 
-            # to_exclude_mask = (phi_t_u_i_v_0 < 0) | (phi_t_u_i_v_1 > 0)
-            local_near_tip_mask = near_tip_mask[narrow_band_indices]
-            local_phi_t[near_tip_mask] = phi_t_u_1_v_i[local_near_tip_mask]
-            local_phi_n[near_tip_mask] = phi_n_u_1_v_i[local_near_tip_mask]
+            n = np.cross(Su, Sv)
+            n = n / np.linalg.norm(n, axis=1)[:, None]
 
-            surface_subset_indices = narrow_band_indices[~search_2d_exclusion_mask]
-            local_phi_n[surface_subset_indices] = surface_phi_n
-            local_projections[surface_subset_indices] = S
-            print(local_phi_n)
-            self.phi_n = local_phi_n
-            self.phi_t = local_phi_t
+            distance = narrow_band_coords - S
+            local_phi_n[narrow_band_mask] = np.sum(distance * n, axis=1)
+            local_projections[narrow_band_mask] = S
+
+            near_tip_mask = np.zeros_like(narrow_band_mask)
+            near_tip_mask[indices_near_tip] = True
+            near_tip_mask[narrow_band_indices[uv_i[:, 0] == 1.0]] = True
+
+            near_tip_coords = coordinates[near_tip_mask]
+            edge_u_1_tree = KDTree(edge_u_1_pts)
+            u_1_v_i = edge_u_1[edge_u_1_tree.query(near_tip_coords, k=1)[1]]
+
+            project_on_line(
+                lambda a=u_1_v_i: ndbspline(a),
+                lambda a=u_1_v_i, n=(0, 1): ndbspline(a, nu=n),
+                lambda a=u_1_v_i, n=(0, 2): ndbspline(a, nu=n),
+                u_1_v_i[:, 1],
+                near_tip_coords,
+            )
+            S = ndbspline(u_1_v_i)
+            Su = ndbspline(u_1_v_i, nu=(1, 0))
+            Sv = ndbspline(u_1_v_i, nu=(0, 1))
+            n = np.cross(Su, Sv, axis=1)
+            t = np.cross(Sv, n, axis=1)
+            t = t / np.linalg.norm(t, axis=1)[:, None]
+            distance = near_tip_coords - S
+            near_tip_phi_t = np.sum(distance * t, axis=1)
+            ahead_of_tip = near_tip_phi_t > 0
+            near_tip_indices = np.where(near_tip_mask)[0]
+            ahead_of_tip_indices = near_tip_indices[ahead_of_tip]
+            local_projections[ahead_of_tip_indices, :] = np.nan
+            if active:
+                local_phi_t[near_tip_mask] = near_tip_phi_t
+            else:
+                local_phi_n[ahead_of_tip_indices] = np.nan
+
+            valid_mask = ~np.isnan(self.phi_n) & ~np.isnan(local_phi_n)
+
+            closer_mask = np.zeros_like(self.phi_n, dtype=bool)
+            closer_mask[valid_mask] = np.abs(self.phi_n[valid_mask]) > np.abs(
+                local_phi_n[valid_mask]
+            )
+
+            to_update = np.where(
+                np.isnan(self.phi_n) & ~np.isnan(local_phi_n) | closer_mask
+            )[0]
+
+            to_snap = np.where(
+                np.isclose(local_phi_n[to_update], 0.0, atol=0.03 * h)
+                & ~(local_phi_t[to_update] > 0)
+            )[0]
+
+            global_to_snap = to_update[to_snap]
+
+            local_phi_n[global_to_snap] = 0.0
+
+            coordinates[global_to_snap] = local_projections[global_to_snap]
+
+            global_idx, tip_idx, _ = np.intersect1d(
+                near_tip_indices, global_to_snap, return_indices=True
+            )
+
+            proj_snapped = local_projections[global_idx]
+            S_snapped = S[tip_idx]
+            t_snapped = t[tip_idx]
+
+            new_distance = proj_snapped - S_snapped
+            new_phi_t = np.sum(new_distance * t_snapped, axis=1)
+
+            local_phi_t[global_idx] = new_phi_t
+
+            self.phi_n[to_update] = local_phi_n[to_update]
+            self.phi_t[to_update] = local_phi_t[to_update]
+            projections[to_update] = local_projections[to_update]
+
+        self.embedded = False
 
     def get(self, nodes, tip):
         assert self.phi_n is not None
@@ -640,8 +638,6 @@ def project_on_surface(ndbspline, uv_i_slice, nodes_subset):
 
         uv_next = np.clip(uv_i_slice - np.column_stack((du, dv)), 0.0, 1.0)
 
-        # 6. BOUNDARY LOCKS (Active Set Phase 1)
-        # Check if nodes are pushing past boundaries
         pushing_u_1 = (uv_i_slice[:, 0] == 1.0) & (F1 < 0)
         pushing_u_0 = (uv_i_slice[:, 0] == 0.0) & (F1 > 0)
         u_caught = pushing_u_1 | pushing_u_0
@@ -650,9 +646,9 @@ def project_on_surface(ndbspline, uv_i_slice, nodes_subset):
         pushing_v_0 = (uv_i_slice[:, 1] == 0.0) & (F2 > 0)
         v_caught = pushing_v_1 | pushing_v_0
 
-        uv_next[:, 1] = np.where(v_caught, uv_i_slice[:, 1], uv_next[:, 1])
+        caught = u_caught | v_caught
 
-        uv_next[:, 0] = np.where(u_caught, uv_i_slice[:, 0], uv_next[:, 0])
+        uv_next = np.where(caught[:, None], uv_i_slice, uv_next)
 
         if np.all(np.isclose(uv_i_slice, uv_next, atol=1e-12)):
             break
