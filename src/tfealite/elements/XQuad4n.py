@@ -81,9 +81,6 @@ class XQuad4n(Quad4n):
         self.t_enrich = t_enrich
         self.partial_cut = partial_cut
         self.in_range = in_range
-        self.tip_coords = None
-        self.tip_n = None
-        self.tip_t = None
 
     def cal_element_matrices(self, eval_mass=False):
         n = (
@@ -120,13 +117,13 @@ class XQuad4n(Quad4n):
             rule[:, 0:2] = (1 + rule[:, 0:2]) / 2
             rule[:, 2] /= 4
             xi_tip, eta_tip = self._cal_tip_nat_coords()
-            tri1_coords = np.array([[-1, 1, 1], [-1, -1, 1], [1, 1, 1]])
+            # tri1_coords = np.array([[-1, 1, 1], [-1, -1, 1], [1, 1, 1]])
+            tri1_coords = np.vstack([self.NAT_1.T, np.ones(3)])
             tip1 = np.linalg.solve(tri1_coords, [xi_tip, eta_tip, 1.0])
 
-            tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
+            # tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
+            tri2_coords = np.vstack([self.NAT_2.T, np.ones(3)])
             tip2 = np.linalg.solve(tri2_coords, [xi_tip, eta_tip, 1.0])
-
-            self._set_tip_var(xi_tip, eta_tip, Nc1, Nc2)
 
             self._integrate_partial_cut(
                 Ke,
@@ -154,52 +151,6 @@ class XQuad4n(Quad4n):
         if eval_mass:
             raise NotImplementedError
         return Ke
-
-    def _set_tip_var(self, xi_tip, eta_tip, Nc1, Nc2):
-        pass
-        phi_n1 = self.phi_n[:-1] @ Nc1[:, :-1]
-        phi_t1 = self.phi_t[:-1] @ Nc1[:, :-1]
-        phi_n2 = self.phi_n[[0, 2, 3]] @ Nc2[:, 1:]
-        phi_t2 = self.phi_t[[0, 2, 3]] @ Nc2[:, 1:]
-        in_sub_1 = np.where(np.isclose(phi_n1, 0.0, atol=1e-12) & (phi_t1 <= 0))[0]
-        in_sub_2 = np.where(np.isclose(phi_n2, 0.0, atol=1e-12) & (phi_t2 <= 0))[0]
-
-        N, dN_dxi = self._base_shape_functions(np.stack([xi_tip, eta_tip], axis=0))
-        N, dN_dxi = N[0], dN_dxi[0]
-        tip = self.node_coords.T @ N
-
-        if len(in_sub_1) != 0:
-            origin = self.node_coords[:-1, :].T @ Nc1[:, in_sub_1[0]]
-        else:
-            origin = self.node_coords[[0, 2, 3], :].T @ Nc2[:, 1 + in_sub_2[0]]
-        if not np.allclose(origin, tip, atol=1e-12):
-            t = tip - origin
-        else:
-            in_sub_1_fwd = np.where(
-                np.isclose(phi_n1, 0.0, atol=1e-12) & (phi_t1 >= 0)
-            )[0]
-            in_sub_2_fwd = np.where(
-                np.isclose(phi_n2, 0.0, atol=1e-12) & (phi_t2 >= 0)
-            )[0]
-            if len(in_sub_1_fwd) != 0:
-                origin = self.node_coords[:-1, :].T @ Nc1[:, in_sub_1_fwd[0]]
-            else:
-                origin = self.node_coords[[0, 2, 3], :].T @ Nc2[:, 1 + in_sub_2_fwd[0]]
-            t = origin - tip
-        t = t / np.linalg.norm(t)
-        J = dN_dxi @ self.node_coords
-        dN_dxy = np.linalg.solve(J, dN_dxi)
-        grad_phi_n = dN_dxy @ self.phi_n
-
-        n_candidate_1 = np.array([-t[1], t[0]])
-        n_candidate_2 = np.array([t[1], -t[0]])
-        if np.dot(n_candidate_1, grad_phi_n) > 0:
-            n = n_candidate_1
-        else:
-            n = n_candidate_2
-        self.tip_coords = tip
-        self.tip_n = n
-        self.tip_t = t
 
     def _cal_intersections(self):
         num = np.empty_like(self.phi_n)
@@ -316,19 +267,17 @@ class XQuad4n(Quad4n):
 
     def _cal_nat_coords(self, points):
         points = np.atleast_2d(points)
-        xi = np.zeros(points.shape[0])
-        eta = np.zeros_like(xi)
+        nat_coords = np.zeros((2, points.shape[0]))
         x_e = self.node_coords
         for _ in range(100):
-            N, dN_dxi = self._base_shape_functions(xi, eta)
+            N, dN_dxi = self._base_shape_functions(nat_coords)
             dx = N @ x_e - points
-            if np.all(np.isclose(np.sum(dx**2, axis=1), 0.0, atol=1e-15)):
-                return xi, eta
+            if np.all(np.isclose(np.sum(dx**2, axis=1), 0.0, atol=1e-12)):
+                return nat_coords
             J = dN_dxi @ x_e
 
             step = np.linalg.solve(J.transpose(0, 2, 1), dx[:, :, None])
-            xi -= step[:, 0, 0]
-            eta -= step[:, 1, 0]
+            nat_coords[:, :] -= step[:, :, 0].T
         raise ValueError("newton iterations didn't converge")
 
     def _cal_curved_edge_node(self, p1, p2):
@@ -631,43 +580,107 @@ class XQuad4n(Quad4n):
         return N, dN_dxi
 
     def nearest_point_on_crack(self, coords):
-        Nc1, Nc2 = self._cal_intersections()
+        coords_2d = np.atleast_2d(coords)
+        N_pts = coords_2d.shape[0]
 
-        def project_on_crack(Nc, x_e, coords):
-            cols = np.where(np.sum(np.isclose(Nc, 0.0, 1e-12), axis=0) == 1)[0]
-            if len(cols) == 2:
-                intersections = x_e.T @ Nc[:, cols]
-                v = intersections[:, 1] - intersections[:, 0]
-                w = coords - intersections[:, 0]
-                t = np.clip(np.dot(v, w) / np.dot(v, v), 0.0, 1.0)
-                p = intersections[:, 0] + t * v
-                d = np.linalg.norm(p - coords)
-                return p, d
-            return None, np.inf
+        try:
+            nat_coords = self._cal_nat_coords(coords_2d)
+        except ValueError:
+            nat_coords = np.zeros((2, N_pts))
 
-        touching = np.where(np.isclose(self.phi_n, 0.0, 1e-12))[0]
-        p1, d1 = project_on_crack(Nc1, self.node_coords[[0, 1, 2], :], coords)
-        p2, d2 = project_on_crack(Nc2, self.node_coords[[0, 2, 3], :], coords)
-        if len(touching) == 1:
-            print("warning: touching")
-            print("coords", coords)
-            p = self.node_coords[touching[0], :]
+        d2N_dxideta = np.array([0.25, -0.25, 0.25, -0.25])
+        dX_dxideta = d2N_dxideta @ self.node_coords  # Shape: (2,)
+        dphi_dxideta = np.dot(d2N_dxideta, self.phi_n)  # Scalar
 
-        elif len(touching) == 2:
-            nodes = self.node_coords[touching, :]
-            v = nodes[1, :] - nodes[0, :]
-            w = coords - nodes[0, :]
-            t = np.clip(np.dot(v, w) / np.dot(v, v), 0.0, 1.0)
-            p = nodes[0, :] + t * v
-            np.linalg.norm(p - coords)
-        elif p1 is not None or p2 is not None:
-            if d1 < d2:
-                p = p1
-            else:
-                p = p2
-        else:
-            return None
-        return p
+        X_proj = np.zeros_like(coords_2d)
+        converged = np.zeros(N_pts, dtype=bool)
+
+        for _ in range(50):
+            if np.all(converged):
+                break
+            N, dN_dxi = self._base_shape_functions(nat_coords)
+            X = N @ self.node_coords
+            dx = X - coords_2d
+            phi_n_val = N @ self.phi_n
+            grad_phi_nat = np.einsum("nij,j->ni", dN_dxi, self.phi_n)
+            J_map = dN_dxi @ self.node_coords  # (N_pts, 2, 2)
+            v = np.stack([-grad_phi_nat[:, 1], grad_phi_nat[:, 0]], axis=1)
+            t = np.einsum("nij,ni->nj", J_map, v)
+            orth_val = np.sum(dx * t, axis=1)
+            current_converged = np.isclose(phi_n_val, 0.0, atol=1e-12) & np.isclose(
+                orth_val, 0.0, atol=1e-12
+            )
+            X_proj[current_converged] = X[current_converged]
+            converged |= current_converged
+            active = ~converged
+            if not np.any(active):
+                break
+            # Derivative of the tangent vector w.r.t xi and eta
+            dt_dxi = (J_map[active, 0, :] * -dphi_dxideta) + (
+                dX_dxideta * grad_phi_nat[active, 0, np.newaxis]
+            )
+            dt_deta = (dX_dxideta * -grad_phi_nat[active, 1, np.newaxis]) + (
+                J_map[active, 1, :] * dphi_dxideta
+            )
+            J_NR = np.zeros((np.sum(active), 2, 2))
+            J_NR[:, 0, 0] = grad_phi_nat[active, 0]
+            J_NR[:, 0, 1] = grad_phi_nat[active, 1]
+            J_NR[:, 1, 0] = np.sum(J_map[active, 0, :] * t[active], axis=1) + np.sum(
+                dx[active] * dt_dxi, axis=1
+            )
+            J_NR[:, 1, 1] = np.sum(J_map[active, 1, :] * t[active], axis=1) + np.sum(
+                dx[active] * dt_deta, axis=1
+            )
+            Residual = np.stack([-phi_n_val[active], -orth_val[active]], axis=1)
+            try:
+                step = np.linalg.solve(J_NR, Residual)
+            except np.linalg.LinAlgError:
+                break
+            nat_coords[0, active] += step[:, 0]
+            nat_coords[1, active] += step[:, 1]
+        # If the hyperbola extends outside the element, the nearest valid point
+        # must lie on the intersection with the Quad4n boundary edges.
+        inside = (np.abs(nat_coords[0, :]) <= 1.0 + 1e-6) & (
+            np.abs(nat_coords[1, :]) <= 1.0 + 1e-6
+        )
+        valid = converged & inside
+
+        if not np.all(valid):
+            edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+            all_intersections = []
+            # Find the exact zero-crossings on the 4 physical edges
+            for i, j in edges:
+                if self.phi_n[i] * self.phi_n[j] <= 0:
+                    denom = self.phi_n[i] - self.phi_n[j]
+                    if np.isclose(denom, 0.0):
+                        # Edge lies perfectly on the crack
+                        all_intersections.extend(
+                            [self.node_coords[i], self.node_coords[j]]
+                        )
+                    else:
+                        t_intersect = self.phi_n[i] / denom
+                        pt = self.node_coords[i] + t_intersect * (
+                            self.node_coords[j] - self.node_coords[i]
+                        )
+                        all_intersections.append(pt)
+
+            all_intersections = np.unique(np.round(all_intersections, 8), axis=0)
+            outside_idx = np.where(~valid)[0]
+
+            for idx in outside_idx:
+                dists = np.linalg.norm(all_intersections - coords_2d[idx], axis=1)
+                best_pt = all_intersections[np.argmin(dists)]
+                X_proj[idx] = best_pt
+
+                try:
+                    nat_coords[:, idx] = self._cal_nat_coords(best_pt).flatten()
+                except ValueError:
+                    pass
+
+        if np.asarray(coords).ndim == 1:
+            return X_proj[0], nat_coords[:, 0]
+
+        return X_proj, nat_coords
 
     def jump_shape_functions(self, nat_coords, tip_coords):
         return jump_shape_functions(

@@ -1,5 +1,6 @@
 import numpy as np
 import pyvista as pv
+from pyvista import CellType
 from ..core.dofs import DofType, BASE_DOFS, HEAVISIDE_DOFS, BRANCH_DOFS
 from ..elements.utils import (
     cut_embedding_tri_iter,
@@ -50,9 +51,7 @@ def build_XQuad4n(model, mult=1.0):
             Ni = centroid + (Ni - centroid) * 0.999
 
             sub_nat_x_e = Ni.T @ nat_x_e
-            sub_shape_funcs = elem.shape_functions(
-                sub_nat_x_e[:, 0], sub_nat_x_e[:, 1]
-            )[0]
+            sub_shape_funcs = elem.shape_functions(sub_nat_x_e.T)[0]
 
             sub_phi_t = np.sum(sub_shape_funcs[:, :4] * phi_t[None, :], axis=1)
 
@@ -72,7 +71,7 @@ def build_XQuad4n(model, mult=1.0):
             points_ref.append(sub_vertices)
             displacements.append(node_disps)
 
-            stresses.append(elem.cal_stresses(sub_nat_x_e[:, 0], sub_nat_x_e[:, 1], Ue))
+            stresses.append(elem.cal_stresses(sub_nat_x_e.T, Ue))
 
     def build_quad(Ue, elem_vertices, elem, points_ref, faces, displacements, stresses):
         sub_vertices = elem_vertices
@@ -115,7 +114,7 @@ def build_XQuad4n(model, mult=1.0):
         ]
 
         ls = model.ls[most_enriched_node - 1]
-        tip = 1
+        tip = 0
 
         if t_enrich:
             tip = model.tip[
@@ -157,12 +156,11 @@ def build_XQuad4n(model, mult=1.0):
 
             if partial_cut:
                 xi_tip, eta_tip = elem._cal_tip_nat_coords()
-                elem._set_tip_var(xi_tip, eta_tip, Nc1, Nc2)
-
-                tri1_coords = np.array([[-1, 1, 1], [-1, -1, 1], [1, 1, 1]])
+                tri1_coords = np.vstack([elem.NAT_1.T, np.ones(3)])
                 tip1 = np.linalg.solve(tri1_coords, [xi_tip, eta_tip, 1.0])
 
-                tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
+                # tri2_coords = np.array([[-1, 1, -1], [-1, 1, 1], [1, 1, 1]])
+                tri2_coords = np.vstack([elem.NAT_2.T, np.ones(3)])
                 tip2 = np.linalg.solve(tri2_coords, [xi_tip, eta_tip, 1.0])
 
                 sub_tris_1 = partial_cut_embedding_tri_iter(Nc1, tip1, range(4))
@@ -171,13 +169,13 @@ def build_XQuad4n(model, mult=1.0):
                 sub_tris_1 = cut_embedding_tri_iter(Nc1)
                 sub_tris_2 = cut_embedding_tri_iter(Nc2)
 
-            tri_ref_1 = np.array([[-1, -1], [1, -1], [1, 1]])
-            tri_ref_2 = np.array([[-1, -1], [1, 1], [-1, 1]])
+            np.array([[-1, -1], [1, -1], [1, 1]])
+            np.array([[-1, -1], [1, 1], [-1, 1]])
 
             build_triangles(
                 sub_tris_1,
                 Ue,
-                tri_ref_1,
+                elem.NAT_1,
                 elem_vertices,
                 phi_t,
                 elem,
@@ -189,7 +187,7 @@ def build_XQuad4n(model, mult=1.0):
             build_triangles(
                 sub_tris_2,
                 Ue,
-                tri_ref_2,
+                elem.NAT_2,
                 elem_vertices,
                 phi_t,
                 elem,
@@ -316,7 +314,7 @@ def build_XTetr4n(model, mult=1.0):
     ):
         for Ni, *_ in tetr_iterator:
             centroid = np.mean(Ni, axis=1, keepdims=True)
-            Ni = centroid + (Ni - centroid) * 0.99999
+            Ni = centroid + (Ni - centroid) * 0.99
 
             sub_nat_x_e = Ni.T @ nat_x_e
             sub_shape_funcs = elem.shape_functions(sub_nat_x_e.T)[0]
@@ -660,6 +658,46 @@ def build_Tri3n(nodes, elements, node_stress=None):
 
 def build_XTri3n(nodes, elements, cut_info, level_sets, node_stress=None):
     nodes = np.asarray(nodes)
+
+
+def build_mesh(nodes, elements):
+    nodes = np.asarray(nodes)
+
+    coords = nodes[:, 1:].astype(float)
+    if coords.shape[1] == 2:
+        points = np.column_stack((coords, np.zeros(coords.shape[0])))
+    else:
+        points = coords[:, :3]
+
+    cells_list = []
+    cell_eids = []
+    cell_types = []
+
+    etype_map = {
+        "Tri3n": CellType.TRIANGLE,
+        "Quad4n": CellType.QUAD,
+        "Tetr4n": CellType.TETRA,
+        "Hex8n": CellType.HEXAHEDRON,
+    }
+
+    for eid, etype, _, _, conn in elements:
+        conn_idx = [int(n) - 1 for n in conn]
+
+        cells_list.extend([len(conn_idx), *conn_idx])
+        cell_eids.append(eid)
+
+        if etype in etype_map:
+            cell_types.append(etype_map[etype])
+        else:
+            raise ValueError(f"Unknown element type '{etype}' for element {eid}.")
+
+    cells_array = np.array(cells_list)
+    cell_types_array = np.array(cell_types, dtype=np.uint8)
+
+    mesh = pv.UnstructuredGrid(cells_array, cell_types_array, points)
+    mesh.cell_data["eid"] = cell_eids
+
+    return mesh
 
 
 def build_Tetr4n(nodes, elements, node_stress=None):

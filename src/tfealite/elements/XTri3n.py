@@ -10,6 +10,7 @@ from .utils import (
     cut_embedding_tri_iter,
     enriched_shape_functions,
     partial_cut_embedding_tri_iter,
+    jump_shape_functions,
 )
 
 
@@ -23,6 +24,7 @@ class XTri3n(Tri3n):
     N_DOFS: Final = DOFS * N_FN
     H_DOFS: Final = DOFS * H_FN
     TIP_DOFS: Final = DOFS * TIP_FN
+    NAT_COORDS = np.array([[0, 0], [1, 0], [0, 1]], dtype=float)
 
     def __new__(
         cls,
@@ -102,7 +104,7 @@ class XTri3n(Tri3n):
         xi, eta = 1 / 3, 1 / 3
         weight = 1 / 2
 
-        _, dN_dxi = self._base_shape_functions(xi, eta)
+        _, dN_dxi = self._base_shape_functions(np.array([xi, eta]))
         J = dN_dxi[0, :, :] @ x_e
         detJ = np.linalg.det(J)
         Nc = None
@@ -110,9 +112,8 @@ class XTri3n(Tri3n):
             Nc = self._cal_intersections()
         else:
             (rule, correction) = qd.TRI_RULES[10]
-            xi = rule[:, 0]
-            eta = rule[:, 1]
-            _, dN_dxi = self.shape_functions(xi, eta)
+            nat_coords = rule[:, :2].T
+            _, dN_dxi = self.shape_functions(nat_coords)
             dN_dxy = np.linalg.solve(J, dN_dxi)
             B = cal_B_2d_vec(dN_dxy)
             w_eff = rule[:, 2] * correction * detJ
@@ -135,14 +136,11 @@ class XTri3n(Tri3n):
             else:
                 rule, correction = qd.TRI_RULES[1]
             for Ni, detJi in cut_embedding_tri_iter(Nc):
-                xi = rule[:, 0]
-                eta = rule[:, 1]
-                n, _ = self._base_shape_functions(xi, eta)
+                nat_coords = rule[:, :2].T
+                n, _ = self._base_shape_functions(nat_coords)
                 print(J.T)
-                xi_sub, eta_sub = np.linalg.solve(
-                    J.T, x_e.T @ Ni @ n.T - x_e[0, :, None]
-                )
-                _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+                sub_nat_coords = self.NAT_COORDS.T @ Ni @ n.T
+                _, dN_dxi_sub = self.shape_functions(sub_nat_coords)
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
                 B = cal_B_2d_vec(dN_dxy_sub)
                 w_eff = rule[:, 2] * detJi * correction * detJ
@@ -171,44 +169,51 @@ class XTri3n(Tri3n):
             duffy = DuffyDistance(x_e_i)
             u, v = rule[:, 0], rule[:, 1]
 
-            xi_d, eta_d, w_d = duffy.transform(u, v, beta=1)
-            n, _ = self._base_shape_functions(xi_d, eta_d)
-            xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ n.T - x_e[0, :, None])
-            _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
+            N_gp = len(u)
+
+            xi_d_1, eta_d_1, w_d_1 = duffy.transform(u, v, beta=1)
+            xi_d_2, eta_d_2, w_d_2 = duffy.transform(u, v, beta=2)
+
+            xi_d_all = np.concatenate([xi_d_1, xi_d_2])
+            eta_d_all = np.concatenate([eta_d_1, eta_d_2])
+            w_d_all = np.concatenate([w_d_1, w_d_2])
+            rule_w_all = np.tile(rule[:, 2], 2)  # Repeat the Gauss weights
+
+            n = np.array([1 - xi_d_all - eta_d_all, xi_d_all, eta_d_all])
+            sub_nat_coords = self.NAT_COORDS.T @ Ni @ n.T
+            _, dN_dxi_sub = self.shape_functions(sub_nat_coords)
             dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-            TIP_B = cal_B_2d_vec(dN_dxy_sub[:, :, self.N_FN :])
-            w_eff = rule[:, 2] * correction * w_d * detJi * detJ
+            TIP_B_all = cal_B_2d_vec(dN_dxy_sub[:, :, self.N_FN :])
+            w_eff_all = rule_w_all * correction * w_d_all * detJi * detJ
             begin_tip = self.N_DOFS
             Ke[begin_tip:, begin_tip:] += np.sum(
-                (TIP_B.transpose(0, 2, 1) @ self.C @ TIP_B) * w_eff[:, None, None],
+                (TIP_B_all[:N_gp].transpose(0, 2, 1) @ self.C @ TIP_B_all[:N_gp])
+                * w_eff_all[:N_gp, None, None],
                 axis=0,
             )
 
-            xi_d, eta_d, w_d = duffy.transform(u, v, beta=2)
-            n, _ = self._base_shape_functions(xi_d, eta_d)
-            xi_sub, eta_sub = np.linalg.solve(J.T, x_e.T @ Ni @ n.T - x_e[0, :, None])
-            _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
-            dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-            TIP_B = cal_B_2d_vec(dN_dxy_sub[:, :, self.N_FN :])
-            w_eff = rule[:, 2] * correction * w_d * detJi * detJ
             begin_tip = self.N_DOFS
             res = np.sum(
-                B.transpose(0, 2, 1) @ self.C @ TIP_B * w_eff[:, None, None], axis=0
+                B.transpose(0, 2, 1)
+                @ self.C
+                @ TIP_B_all[N_gp:]
+                * w_eff_all[N_gp:, None, None],
+                axis=0,
             )
             Ke[0:begin_tip, begin_tip:] += res
             Ke[begin_tip:, 0:begin_tip] += res.T
 
-    def _base_shape_functions(self, xi, eta):
-        xi = np.atleast_1d(xi)
-        eta = np.atleast_1d(eta)
+    def _base_shape_functions(self, nat_coords):
+        xi = np.atleast_1d(nat_coords[0])
+        eta = np.atleast_1d(nat_coords[1])
         N = np.array([1 - xi - eta, xi, eta]).T
         dN_dxi = np.tile(
             np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]]), (xi.shape[0], 1, 1)
         )
         return N, dN_dxi
 
-    def _quadratic_shape_functions(self, xi, eta):
-        N, dN_dxi = self._base_shape_functions(xi, eta)
+    def _quadratic_shape_functions(self, nat_coords):
+        N, dN_dxi = self._base_shape_functions(nat_coords)
         N2 = np.empty_like(N)
         N2[:-1] = N[:-1] * N[1:]
         N2[-1] = N[0] * N[-1]
@@ -217,33 +222,60 @@ class XTri3n(Tri3n):
         dN2_dxi[:, -1] = N[None, -1] * dN_dxi[:, 0] + dN_dxi[:, -1] * N[None, 0]
         return N2, dN2_dxi
 
-    def _cubic_shape_functions(self, xi, eta):
-        L1 = 1.0 - xi - eta
-        L2 = xi
-        L3 = eta
-        Q1 = 3 * L1**2 - 2 * L1**3
-        Q2 = 3 * L2**2 - 2 * L2**3
-        Q3 = 3 * L3**2 - 2 * L3**3
-        Q = np.array([Q1, Q2, Q3]).T
-        dQ_dL1 = 6 * L1 * (1.0 - L1)
-        dQ_dL2 = 6 * L2 * (1.0 - L2)
-        dQ_dL3 = 6 * L3 * (1.0 - L3)
-        dQ1_dxi = -dQ_dL1
-        dQ2_dxi = dQ_dL2
-        dQ3_dxi = np.zeros_like(xi)
-        dQ1_deta = -dQ_dL1
-        dQ2_deta = np.zeros_like(eta)
-        dQ3_deta = dQ_dL3
-        row1 = [dQ1_dxi, dQ2_dxi, dQ3_dxi]
-        row2 = [dQ1_deta, dQ2_deta, dQ3_deta]
-        dQ_dxi = np.stack([row1, row2]).transpose(2, 0, 1)
-        return Q, dQ_dxi
-
-    def shape_functions(self, xi, eta):
+    def shape_functions(self, nat_coords):
         return enriched_shape_functions(
-            self, self._base_shape_functions, self._cubic_shape_functions, xi, eta
+            self, self._base_shape_functions, self._base_shape_functions, nat_coords
         )
 
     def stresses_at_nodes(self, Ue):
         Ue = np.asanyarray(Ue, dtype=float).ravel()
         raise NotImplementedError
+
+    def nearest_point_on_crack(self, coords):
+        coords_2d = np.atleast_2d(coords)
+        N_pts = coords_2d.shape[0]
+
+        Nc = self._cal_intersections()
+        phi_n = self.phi_n @ Nc
+        on_crack = np.isclose(phi_n, 0.0, atol=1e-12)
+        crack_pts = self.node_coords.T @ Nc
+        crack_pts = crack_pts[:, on_crack].T
+
+        if np.all(np.isclose(crack_pts[1:], crack_pts[0], 1e-12)):  # touching node
+            crack_indices = np.where(on_crack)[0]
+            return crack_pts[0], self.NAT_COORDS @ Nc[:, crack_indices[0]]
+        if np.all(np.isclose(crack_pts[1:], crack_pts[0], atol=1e-12)):
+            crack_indices = np.where(on_crack)[0]
+            single_X_proj = crack_pts[0]
+            single_nat_coord = self.NAT_COORDS @ Nc[:, crack_indices[0]]
+            X_proj = np.tile(single_X_proj, (N_pts, 1))
+            nat_coords = np.tile(single_nat_coord, (N_pts, 1)).T
+            if np.asarray(coords).ndim == 1:
+                return X_proj[0], nat_coords[:, 0]
+            return X_proj, nat_coords
+
+        P_A = crack_pts[0]
+        P_B = crack_pts[1]
+        v = P_B - P_A
+        v_norm_sq = np.dot(v, v)
+        w = coords_2d - P_A
+        t = np.dot(w, v) / v_norm_sq
+        t = np.clip(t, 0.0, 1.0)
+        X_proj = P_A + t[:, np.newaxis] * v
+        X0, X1, X2 = self.node_coords[0], self.node_coords[1], self.node_coords[2]
+        J = np.column_stack([X1 - X0, X2 - X0])
+        dx = X_proj - X0
+        nat_coords = np.linalg.solve(J, dx.T)
+        if np.asarray(coords).ndim == 1:
+            return X_proj[0], nat_coords[:, 0]
+
+        return X_proj, nat_coords
+
+    def jump_shape_functions(self, nat_coords, tip_coords):
+        return jump_shape_functions(
+            self,
+            self._base_shape_functions,
+            self._base_shape_functions,
+            nat_coords,
+            tip_coords,
+        )

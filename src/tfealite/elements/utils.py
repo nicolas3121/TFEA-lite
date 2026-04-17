@@ -6,6 +6,10 @@ ELEM_EDGES = {
     "Tri3n": ([1, 2, 0], [0, 1, 2]),
     "Quad4n": ([1, 2, 3, 0], [0, 1, 2, 3]),
     "Tetr4n": ([1, 2, 3, 2, 3, 3], [0, 1, 2, 0, 0, 1]),
+    "Hex8n": (
+        [1, 2, 3, 0, 5, 6, 7, 4, 4, 5, 6, 7],
+        [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3],
+    ),
 }
 
 
@@ -205,7 +209,7 @@ def partial_cut_embedding_tri_iter(Nc, tip, range):
 
 
 def jump_shape_functions(elem, shape_fn, pu_fn, nat_coords, tip_coords):
-    n_points = nat_coords.shape[0]
+    n_points = nat_coords.shape[1]
     N, _ = shape_fn(nat_coords)
     Q, _ = pu_fn(nat_coords)
     N_jump = np.empty(
@@ -243,6 +247,69 @@ def contains_points(node_coords, points):
     cross = edges[None, :, 0] * vec[:, :, 1] - edges[None, :, 1] * vec[:, :, 0]
 
     is_inside = np.all(cross >= 0.0, axis=1)
+    return is_inside
+
+
+def contains_points_3d(node_coords, points, tol=1e-10):
+    points = np.atleast_2d(points)
+    num_nodes = node_coords.shape[0]
+
+    # 1. Define the triangular boundary faces based on element type.
+    # Winding order is crucial: vertices must be ordered counter-clockwise
+    # from the outside so the calculated normal points OUTWARD.
+    if num_nodes == 4:
+        # Tetrahedron (Standard FEM numbering: 0,1,2 on base, 3 is top)
+        faces = np.array(
+            [
+                [0, 2, 1],  # Base (normal points down)
+                [0, 1, 3],  # Front face
+                [1, 2, 3],  # Right face
+                [2, 0, 3],  # Left face
+            ]
+        )
+    elif num_nodes == 8:
+        # Hexahedron (Standard FEM: bottom 0,1,2,3 CCW; top 4,5,6,7 CCW)
+        # We split the 6 quad faces into 12 triangles to handle warped faces.
+        faces = np.array(
+            [
+                [0, 3, 2],
+                [0, 2, 1],  # Bottom (normal points -z)
+                [4, 5, 6],
+                [4, 6, 7],  # Top    (normal points +z)
+                [0, 1, 5],
+                [0, 5, 4],  # Front  (normal points -y)
+                [1, 2, 6],
+                [1, 6, 5],  # Right  (normal points +x)
+                [2, 3, 7],
+                [2, 7, 6],  # Back   (normal points +y)
+                [3, 0, 4],
+                [3, 4, 7],  # Left   (normal points -x)
+            ]
+        )
+    else:
+        raise ValueError("Element must have exactly 4 (Tet) or 8 (Hex8) nodes.")
+
+    # 2. Extract triangle vertices A, B, C for all faces
+    A = node_coords[faces[:, 0]]  # Shape: (num_faces, 3)
+    B = node_coords[faces[:, 1]]
+    C = node_coords[faces[:, 2]]
+
+    # 3. Compute outward normals using cross product: (B - A) x (C - A)
+    # No need to normalize the vectors for a simple sign check
+    normals = np.cross(B - A, C - A)  # Shape: (num_faces, 3)
+
+    # 4. Calculate vectors from vertex A on each face to every test point
+    # points: (num_points, 1, 3)  |  A: (1, num_faces, 3)
+    vecs = points[:, None, :] - A[None, :, :]  # Shape: (num_points, num_faces, 3)
+
+    # 5. Dot product of outward normals and point vectors
+    # A positive dot product means the point is "outside" that face.
+    # A negative dot product means the point is "inside".
+    dots = np.sum(normals[None, :, :] * vecs, axis=2)  # Shape: (num_points, num_faces)
+
+    # 6. Check if points are inside ALL faces
+    is_inside = np.all(dots <= tol, axis=1)
+
     return is_inside
 
 
@@ -298,6 +365,7 @@ def enriched_shape_functions(
     phi_t=None,
     dphi_n_dxi=None,
     dphi_t_dxi=None,
+    enforce_sign=None,
 ):
     n_points = nat_coords.shape[1]
     N = np.empty(
@@ -326,6 +394,13 @@ def enriched_shape_functions(
     if phi_n is None or phi_t is None:
         phi_n = np.sum(elem.phi_n * N[:, : elem.N_FN], axis=1)
         phi_t = np.sum(elem.phi_t * N[:, : elem.N_FN], axis=1)
+    to_flip = None
+    if enforce_sign is not None:
+        to_flip = (phi_n != 0.0) & (np.sign(phi_n) != enforce_sign)
+        if np.any(to_flip):
+            print("warning had to flip", np.sum(to_flip))
+        phi_n[to_flip] *= -1
+
     if elem.h_enrich:
         assert phi_n is not None and phi_t is not None
         h_shifted = (np.sign(phi_n)[:, None] - np.sign(elem.phi_n)) / 2
@@ -336,6 +411,8 @@ def enriched_shape_functions(
         if dphi_n_dxi is None or dphi_t_dxi is None:
             dphi_n_dxi = np.sum(elem.phi_n * dN_dxi[:, :, : elem.N_FN], axis=2)
             dphi_t_dxi = np.sum(elem.phi_t * dN_dxi[:, :, : elem.N_FN], axis=2)
+        if enforce_sign is not None:
+            dphi_n_dxi[to_flip] *= -1
         r = np.sqrt(phi_n**2 + phi_t**2)
         r = np.maximum(r, 1e-14)  # avoid divide by zero
         sqrt_r = np.sqrt(r)
@@ -398,14 +475,6 @@ def enriched_shape_functions(
 
         term_A = dbf_shifted_dxi[:, None, :, :] * Q[:, :, None, None]
         term_B = bf_shifted[:, None, None, :] * dQ_dxi[:, :, :, None]
-
-        # dN_dxi[:, 0, begin_tip:end_tip] = (
-        #     term_A[:, :, 0, :] + term_B[:, 0, :, :]
-        # ).reshape(-1, elem.TIP_FN)
-        #
-        # dN_dxi[:, 1, begin_tip:end_tip] = (
-        #     term_A[:, :, 1, :] + term_B[:, 1, :, :]
-        # ).reshape(-1, elem.TIP_FN)
 
         combined_terms = term_A.swapaxes(1, 2) + term_B
 
