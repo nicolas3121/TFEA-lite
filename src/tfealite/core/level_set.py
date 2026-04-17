@@ -22,9 +22,10 @@ class LevelSet:
         self.phi_t = None
         self.phi_t2 = None
         self.phi_t_list = []
+        self.partial_cut_elem_list = []
         self.mesh_tree = None
         self.bspline = None
-        self.dbspline = None
+        self.ndbsplines = None
         self.t = None
         self.t2 = None
 
@@ -49,10 +50,9 @@ class LevelSet:
         self.ddbspline = bspline.derivative(nu=2)
 
         self.phi_n = phi_n
-        self.phi_t = phi_t1
-        self.embedded = embedded
+        self.phi_t_list.append(phi_t1)
         if embedded:
-            self.phi_t2 = phi_t2
+            self.phi_t_list.append(phi_t2)
 
     def gen_from_plane(self, nodes, p1, p2, p3, embedded=False):
         coordinates = np.asarray(nodes, dtype=float)[:, 1:4]
@@ -70,9 +70,10 @@ class LevelSet:
         phi_t2 = np.sum((coordinates - p1) * t2, axis=1)
         self.phi_n = phi_n
         self.phi_t = phi_t1
+        self.phi_t_list.append(phi_t1)
         self.embedded = embedded
         if embedded:
-            self.phi_t2 = phi_t2
+            self.phi_t_list.append(phi_t2)
 
     # node snapping snapt momenteel ook nodes die voor de crack liggen, mogelijk aanpassen zodat niet meer gebeurt
     def gen_from_bspline(
@@ -216,14 +217,15 @@ class LevelSet:
 
         phi_t = np.full(coordinates.shape[0], np.nan, dtype=np.float64)
         cal_near_tip(t1, 1, -1, indices_near_tip1, phi_t)
-        if embedded:
-            phi_t2 = np.full(coordinates.shape[0], np.nan, dtype=np.float64)
-            cal_near_tip(t2, 0, 1, indices_near_tip2, phi_t2)
-            self.phi_t2 = phi_t2
 
         self.embedded = embedded
         self.phi_n = phi_n
         self.phi_t = phi_t
+        self.phi_t_list.append(phi_t)
+        if embedded:
+            phi_t2 = np.full(coordinates.shape[0], np.nan, dtype=np.float64)
+            cal_near_tip(t2, 0, 1, indices_near_tip2, phi_t2)
+            self.phi_t_list.append(phi_t2)
         self.t = t1
 
     def gen_from_ndbsplines(
@@ -387,47 +389,43 @@ class LevelSet:
             local_phi_t[global_idx] = new_phi_t
 
             self.phi_n[to_update] = local_phi_n[to_update]
-            self.phi_t[to_update] = local_phi_t[to_update]
+            if active:
+                self.phi_t[to_update] = local_phi_t[to_update]
+                self.phi_t_list.append(local_phi_t)
             projections[to_update] = local_projections[to_update]
 
         self.embedded = False
 
     def get(self, nodes, tip):
         assert self.phi_n is not None
-        assert self.phi_t is not None
+        assert self.phi_t_list is not None
         nodes = np.asarray(nodes) - 1
         phi_n = self.phi_n[nodes]
-        if tip is None or tip == 1 or tip == 0:
-            phi_t = self.phi_t[nodes]
+        if tip is not None:
+            phi_t = self.phi_t_list[tip][nodes]
         else:
-            assert self.phi_t2 is not None
-            phi_t = self.phi_t2[nodes]
+            phi_t = None
         return phi_n, phi_t
 
     def is_cut(self, element) -> Tuple[CutType, None | int, bool]:
         assert self.phi_n is not None
-        assert self.phi_t is not None
+        assert self.phi_t_list is not None
         nodes = np.asarray(element[4]) - 1
         elem_type = element[1]
         num_edges, denom_edges = ELEM_EDGES[elem_type]
         phi_n = self.phi_n[nodes]
-        phi_t = self.phi_t[nodes]
         if np.any(np.isnan(phi_n)):
             return CutType.NONE, None, False
-        phi_t2 = None
         n_nodes = len(nodes)
         # no sign change of normal level set inside element or at node / edge
         sign_n = (1 - np.isclose(phi_n, 0, atol=1e-12)) * np.sign(phi_n)
         m = sign_n[denom_edges] * sign_n[num_edges]
         if np.all(m > 0):
             return CutType.NONE, None, False
-        sign_t = (1 - np.isclose(phi_t, 0, atol=1e-12)) * np.sign(phi_t)
-        if np.sum(sign_t) == n_nodes:
-            return CutType.NONE, None, False
-        if self.phi_t2 is not None:
-            phi_t2 = self.phi_t2[nodes]
-            sign_t2 = (1 - np.isclose(phi_t2, 0, atol=1e-12)) * np.sign(phi_t2)
-            if np.sum(sign_t2) == n_nodes:
+        for phi_t_i in self.phi_t_list:
+            phi_t = phi_t_i[nodes]
+            sign_t = (1 - np.isclose(phi_t, 0, atol=1e-12)) * np.sign(phi_t)
+            if np.sum(sign_t) == n_nodes:
                 return CutType.NONE, None, False
         num = phi_n[num_edges]
         denom = num - phi_n[denom_edges]
@@ -447,59 +445,46 @@ class LevelSet:
         )
         if n_actual_cuts == 0:
             return CutType.NONE, None, False
-        d_t = N1 * phi_t[denom_edges] + (1 - N1) * phi_t[num_edges]
-        d_t2 = None
-        x2 = None
-        if phi_t2 is not None:
-            d_t2 = N1 * phi_t2[denom_edges] + (1 - N1) * phi_t2[num_edges]
-            x2 = np.sum(
-                (1 - np.isclose(d_t2, 0.0, 1e-12)) * np.sign(d_t2) * actual_cuts
-            )
-        x = np.sum((1 - np.isclose(d_t, 0.0, 1e-12)) * np.sign(d_t) * actual_cuts)
 
-        if x == n_actual_cuts:
-            return CutType.NONE, None, False
-        if x2 is not None:
-            if x2 == n_actual_cuts:
+        for i, phi_t_i in enumerate(self.phi_t_list):
+            phi_t = phi_t_i[nodes]
+            d_t = N1 * phi_t[denom_edges] + (1 - N1) * phi_t[num_edges]
+            x = np.sum(
+                (1 - np.isclose(d_t, 0, atol=1e-12)) * np.sign(d_t) * actual_cuts
+            )
+            if x == n_actual_cuts:
                 return CutType.NONE, None, False
-            elif x2 > -n_actual_cuts and n_actual_cuts > 1:
-                return CutType.PARTIAL, 2, touching
-        if x > -n_actual_cuts and n_actual_cuts > 1:
-            return CutType.PARTIAL, 1, touching
+            if x > -n_actual_cuts and n_actual_cuts > 1:
+                return CutType.PARTIAL, i, touching
         return CutType.CUT, None, touching
 
     def in_range(self, element, radius) -> Tuple[bool, None | int, None | NDArray]:
         assert self.phi_n is not None
-        assert self.phi_t is not None
+        assert self.phi_t_list is not None
         if radius == 0.0:
             return (False, None, None)
 
         nodes = np.asarray(element[4]) - 1
         phi_n = self.phi_n[nodes]
-        phi_t = self.phi_t[nodes]
-        if np.any(np.isnan(phi_n)) or np.any(np.isnan(phi_t)):
+        if np.any(np.isnan(phi_n)):
             return (False, None, None)
 
-        phi_t2 = None
-
-        r1 = np.sqrt(phi_n**2 + phi_t**2)
-        in_range1 = r1 <= radius
-        is_in_range1 = np.any(in_range1)
-        in_range2 = None
-        if self.phi_t2 is not None:
-            phi_t2 = self.phi_t2[nodes]
-            if np.any(np.isnan(phi_t2)):
-                return (False, None, None)
-            r2 = np.sqrt(phi_n**2 + phi_t2**2)
-            in_range2 = r2 <= radius
-            is_in_range2 = np.any(in_range2)
-
-            if is_in_range1 and is_in_range2:
-                print("warning: overlapping geometrical enrichment")
-            if is_in_range2:
-                return (True, 2, in_range2)
-        if is_in_range1:
-            return (True, 1, in_range1)
+        is_in_range_final = False
+        in_range_final = None
+        i_final = -1
+        for i, phi_t_i in enumerate(self.phi_t_list):
+            phi_t = phi_t_i[nodes]
+            if np.any(np.isnan(phi_t)):
+                continue
+            r = phi_n**2 + phi_t**2
+            in_range = r < radius**2
+            if np.all(in_range):
+                if is_in_range_final:
+                    print("warning: overlapping geometrical enrichment")
+                in_range_final = in_range
+                i_final = i
+        if is_in_range_final:
+            return (True, i_final, in_range_final)
         return (False, None, None)
 
 

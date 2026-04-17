@@ -24,9 +24,8 @@ class Quad4n:
         rule, correction = QUAD_RULES[3]
         Me = np.zeros((8, 8)) if eval_mass else None
         x_e = self.node_coords
-        xi = rule[:, 0]
-        eta = rule[:, 1]
-        N, dN_dxi = Quad4n.shape_functions(self, xi, eta)
+        nat_coords = rule[:, :2].T
+        N, dN_dxi = Quad4n.shape_functions(self, nat_coords)
         J = dN_dxi @ x_e
         detJ = np.linalg.det(J)
         dN_dxy = np.linalg.solve(J, dN_dxi)
@@ -35,7 +34,7 @@ class Quad4n:
         Ke = np.sum((B.transpose(0, 2, 1) @ self.C @ B) * w_eff[:, None, None], axis=0)
         if eval_mass:
             rho_t = self.rho
-            N_2d = np.zeros((xi.shape[0], 2, 8))
+            N_2d = np.zeros((nat_coords.shape[0], 2, 8))
             N_2d[:, 0, ::2] = N[:, :]
             N_2d[:, 1, 1::2] = N[:, :]
             Me = np.sum(
@@ -96,9 +95,9 @@ class Quad4n:
                 )
         return Fe
 
-    def shape_functions(self, xi, eta):
-        xi = np.atleast_1d(np.asarray(xi))
-        eta = np.atleast_1d(np.asarray(eta))
+    def shape_functions(self, nat_coords):
+        xi = np.atleast_1d(nat_coords[0])
+        eta = np.atleast_1d(nat_coords[1])
         xi_min = 1 - xi
         xi_plus = 1 + xi
         eta_min = 1 - eta
@@ -119,9 +118,9 @@ class Quad4n:
         dN_dxi = 0.25 * np.stack([row1, row2]).transpose(2, 0, 1)
         return N, dN_dxi
 
-    def cal_stresses(self, xi, eta, Ue):
+    def cal_stresses(self, nat_coords, Ue):
         Ue = np.asarray(Ue, dtype=float).ravel()
-        _, dN_dxi = self.shape_functions(xi, eta)
+        _, dN_dxi = self.shape_functions(nat_coords)
         J = dN_dxi @ self.node_coords
         dN_dxy = np.linalg.solve(J, dN_dxi)
         B = cal_B_2d_vec(dN_dxy)
@@ -132,4 +131,4 @@ class Quad4n:
     def stresses_at_nodes(self, Ue):
         xi = np.array([-1.0, 1.0, 1.0, -1.0])
         eta = np.array([-1.0, -1.0, 1.0, 1.0])
-        return self.cal_stresses(xi, eta, Ue)
+        return self.cal_stresses(np.stack([xi, eta], axis=0), Ue)

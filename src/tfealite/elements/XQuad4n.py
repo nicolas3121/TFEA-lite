@@ -36,8 +36,10 @@ class XQuad4n(Quad4n):
     H_DOFS: Final = DOFS * H_FN
     TIP_DOFS: Final = DOFS * TIP_FN
 
-    NAT_1: Final = np.array([[-1, -1], [1, -1], [1, 1]])
-    NAT_2: Final = np.array([[-1, -1], [1, 1], [-1, 1]])
+    NAT_13_1: Final = np.array([[-1, -1], [1, -1], [1, 1]])
+    NAT_13_2: Final = np.array([[-1, -1], [1, 1], [-1, 1]])
+    NAT_24_1: Final = np.array([[1, -1], [1, 1], [-1, 1]])
+    NAT_24_2: Final = np.array([[1, -1], [-1, 1], [-1, -1]])
 
     def __new__(
         cls,
@@ -52,7 +54,6 @@ class XQuad4n(Quad4n):
         in_range=None,
     ):
         if not h_enrich and not t_enrich:
-            # print("creating basic element instead")
             return Quad4n(node_coords, material, real)
         assert h_enrich is not None
         assert t_enrich is not None
@@ -98,9 +99,8 @@ class XQuad4n(Quad4n):
         else:
             x_e = self.node_coords
             (rule, correction) = qd.QUAD_RULES[10]
-            xi = rule[:, 0]
-            eta = rule[:, 1]
-            _, dN_dxi = self.shape_functions(xi, eta)
+            nat_coords = rule[:, :3].T
+            _, dN_dxi = self.shape_functions(nat_coords)
             J = dN_dxi[:, :, : self.N_FN] @ x_e
             detJ = np.linalg.det(J)
             dN_dxy = np.linalg.solve(J, dN_dxi)
@@ -148,12 +148,8 @@ class XQuad4n(Quad4n):
             )
         elif self.h_enrich:
             assert Nc1 is not None and Nc2 is not None
-            self._integrate_sub_tri(
-                Ke, Nc1, self.NAT_1, self.phi_n[:-1], self.phi_t[:-1]
-            )
-            self._integrate_sub_tri(
-                Ke, Nc2, self.NAT_2, self.phi_n[[0, 2, 3]], self.phi_t[[0, 2, 3]]
-            )
+            self._integrate_sub_tri(Ke, Nc1, self.NAT_1)
+            self._integrate_sub_tri(Ke, Nc2, self.NAT_2)
 
         if eval_mass:
             raise NotImplementedError
@@ -168,7 +164,7 @@ class XQuad4n(Quad4n):
         in_sub_1 = np.where(np.isclose(phi_n1, 0.0, atol=1e-12) & (phi_t1 <= 0))[0]
         in_sub_2 = np.where(np.isclose(phi_n2, 0.0, atol=1e-12) & (phi_t2 <= 0))[0]
 
-        N, dN_dxi = self._base_shape_functions(xi_tip, eta_tip)
+        N, dN_dxi = self._base_shape_functions(np.stack([xi_tip, eta_tip], axis=0))
         N, dN_dxi = N[0], dN_dxi[0]
         tip = self.node_coords.T @ N
 
@@ -223,11 +219,32 @@ class XQuad4n(Quad4n):
             1,
         )
         [phi1, phi2, phi3, phi4] = self.phi_n
-        A = phi1 - phi2 + phi3 - phi4
-        B = -2.0 * phi1 + phi2 + phi4
-        C = phi1
-        num_diag = self.phi_n[0]
-        denom_diag = num_diag - self.phi_n[2]
+
+        prod_13 = phi1 * phi3
+        prod_24 = phi2 * phi4
+        diag_13_bad = prod_24 < prod_13
+
+        if diag_13_bad:
+            self.NAT_1 = self.NAT_24_1
+            self.NAT_2 = self.NAT_24_2
+            A = -phi1 + phi2 - phi3 + phi4
+            B = phi1 - 2.0 * phi2 + phi3
+            C = phi2
+            num_diag = phi2
+            denom_diag = phi2 - phi4
+            n11, n12 = 1, 2
+            n22, n23 = 3, 0
+        else:
+            self.NAT_1 = self.NAT_13_1
+            self.NAT_2 = self.NAT_13_2
+            A = phi1 - phi2 + phi3 - phi4
+            B = -2.0 * phi1 + phi2 + phi4
+            C = phi1
+            num_diag = phi1
+            denom_diag = phi1 - phi3
+            n11, n12 = 0, 1
+            n22, n23 = 2, 3
+
         unsolvable_diag = np.isclose(denom_diag, 0)
         s_linear = np.divide(
             num_diag,
@@ -249,21 +266,23 @@ class XQuad4n(Quad4n):
 
         N1_diag = np.where(use_linear, s_linear, s_quad)
 
-        N1_diag = np.where(unsolvable_diag | np.isclose(phi3, 0), 1.0, N1_diag)
+        N1_diag = np.where(
+            unsolvable_diag | np.isclose(num_diag - denom_diag, 0), 1.0, N1_diag
+        )
         N1_diag = np.clip(N1_diag, 0, 1)
 
         Nc1 = np.array(
             [
-                [N1[0], 0, 1 - N1_diag],
-                [1 - N1[0], N1[1], 0],
-                [0, 1 - N1[1], N1_diag],
+                [N1[n11], 0, 1 - N1_diag],
+                [1 - N1[n11], N1[n12], 0],
+                [0, 1 - N1[n12], N1_diag],
             ]
         )
         Nc2 = np.array(
             [
-                [1 - N1_diag, 0, 1 - N1[3]],
-                [N1_diag, N1[2], 0],
-                [0, 1 - N1[2], N1[3]],
+                [1 - N1_diag, 0, 1 - N1[n23]],
+                [N1_diag, N1[n22], 0],
+                [0, 1 - N1[n22], N1[n23]],
             ]
         )
         return Nc1, Nc2
@@ -271,7 +290,7 @@ class XQuad4n(Quad4n):
     def _cal_tip_nat_coords(self):
         xi, eta = 0.0, 0.0
         for _ in range(50):
-            N, dN_dxi = self._base_shape_functions(xi, eta)
+            N, dN_dxi = self._base_shape_functions(np.stack([xi, eta], axis=0))
             N = N[0]
             dN_dxi = dN_dxi[0]
             val_t = np.dot(N, self.phi_t)
@@ -312,87 +331,259 @@ class XQuad4n(Quad4n):
             eta -= step[:, 1, 0]
         raise ValueError("newton iterations didn't converge")
 
-    def _integrate_sub_tri(self, Ke, Nc, nat_x_e, phi_n, phi_t):
-        w_tot = 0
+    def _cal_curved_edge_node(self, p1, p2):
+        p_mid = (p1 + p2) / 2
+        t_vec = p2 - p1
+
+        p4 = p_mid.copy()
+        phi_n = self.phi_n
+
+        for _ in range(10):
+            N, dN_dxi = self._base_shape_functions(p4)
+            N, dN_dxi = N[0], dN_dxi[0]
+
+            phi_n4 = np.dot(N, phi_n)
+            constraint = np.dot(t_vec, p4 - p_mid)
+
+            if np.abs(phi_n4) < 1e-10 and np.abs(constraint) < 1e-10:
+                break
+
+            grad_phi = dN_dxi @ phi_n
+
+            J = np.array([[grad_phi[0], grad_phi[1]], [t_vec[0], t_vec[1]]])
+
+            step = np.linalg.solve(J, [-phi_n4, -constraint])
+            p4 += step
+
+        return p4
+
+    def _integrate_sub_tri(self, Ke, Nc, nat_x_e):
         if self.t_enrich:
             rule, correction = qd.TRI_RULES[10]
         else:
-            rule, correction = qd.TRI_RULES[3]
+            rule, correction = qd.TRI_RULES[5]
         x_e = self.node_coords
-        for Ni, detJi in cut_embedding_tri_iter(Nc):
-            xi = rule[:, 0]
-            eta = rule[:, 1]
-            w = rule[:, 2]
-            nat_sub_x_e = nat_x_e.T @ Ni
-            n = np.array([1 - xi - eta, xi, eta])
-            dn_dxi = np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]])
-            xi_sub, eta_sub = nat_x_e.T @ Ni @ n
 
-            sub_J = dn_dxi @ nat_sub_x_e.T
-            N, _ = self._base_shape_functions(nat_sub_x_e[0, :], nat_sub_x_e[1, :])
-            sub_phi_n = N @ self.phi_n
-            sub_phi_t = N @ self.phi_t
-            phi_n_sub = sub_phi_n @ n
-            phi_t_sub = sub_phi_t @ n
-            dphi_n_sub_dxi = np.linalg.solve(sub_J, dn_dxi @ sub_phi_n)
-            dphi_t_sub_dxi = np.linalg.solve(sub_J, dn_dxi @ sub_phi_t)
+        force_linear = False
 
-            _, dN_dxi_sub = self.shape_functions(
-                xi_sub, eta_sub, phi_n_sub, phi_t_sub, dphi_n_sub_dxi, dphi_t_sub_dxi
-            )
-            J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
-            detJ = np.linalg.det(J)
-            dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-            B = cal_B_2d_vec(dN_dxy_sub)
-            w_eff = w * correction * detJ * detJi * 4
-            w_tot += w_eff
-            Ke += np.sum(
-                B.transpose(0, 2, 1) @ self.C @ B * w_eff[:, None, None], axis=0
-            )
+        while True:
+            Ke_temp = np.zeros_like(Ke)
+            is_valid = True
+
+            for Ni, detJi in cut_embedding_tri_iter(Nc):
+                xi = rule[:, 0]
+                eta = rule[:, 1]
+                w = rule[:, 2]
+                nat_sub_x_e = nat_x_e.T @ Ni
+                N, _ = self._base_shape_functions(nat_sub_x_e)
+                sub_phi_n = N @ self.phi_n
+                on_crack = np.isclose(sub_phi_n, 0.0, atol=1e-10)
+                is_on_crack = np.sum(on_crack) == 2
+                if is_on_crack:
+                    p1_idx = np.where(~on_crack)[0][0]
+                    sign = np.sign(sub_phi_n[p1_idx])
+                else:
+                    sign = None
+
+                if is_on_crack and not force_linear:
+                    on_crack_indices = np.where(on_crack)[0]
+                    p1_idx = np.where(~on_crack)[0][0]
+                    p2_idx, p3_idx = on_crack_indices
+
+                    if p2_idx == 0 and p3_idx == 2:
+                        p2_idx = 2
+                        p3_idx = 0
+
+                    p1 = nat_sub_x_e[:, p1_idx]
+                    p2 = nat_sub_x_e[:, p2_idx]
+                    p3 = nat_sub_x_e[:, p3_idx]
+
+                    p4 = self._cal_curved_edge_node(p2, p3)
+
+                    L1 = 1.0 - xi - eta
+                    L2 = xi
+                    L3 = eta
+
+                    N4 = 4.0 * L2 * L3
+                    dN4_dxi = 4.0 * eta
+                    dN4_deta = 4.0 * xi
+
+                    n = np.array([L1, L2 - 0.5 * N4, L3 - 0.5 * N4, N4])
+
+                    ones = np.ones_like(xi)
+                    dn_row1 = np.array(
+                        [-ones, 1.0 - 0.5 * dN4_dxi, -0.5 * dN4_dxi, dN4_dxi]
+                    )
+                    dn_row2 = np.array(
+                        [-ones, -0.5 * dN4_deta, 1.0 - 0.5 * dN4_deta, dN4_deta]
+                    )
+
+                    dn_dxi = np.stack([dn_row1, dn_row2], axis=0).transpose(2, 0, 1)
+
+                    nat_sub_x_e_4n = np.column_stack([p1, p2, p3, p4])
+
+                    Ji = dn_dxi @ nat_sub_x_e_4n.T
+                    detJi_eval = np.linalg.det(Ji)
+
+                    if np.any(detJi_eval <= 0):
+                        is_valid = False
+                        break
+
+                    detJi = detJi_eval
+                    nat_coords_sub = nat_sub_x_e_4n @ n
+
+                else:
+                    n = np.array([1 - xi - eta, xi, eta])
+                    detJi *= 4
+                    nat_coords_sub = nat_sub_x_e @ n
+
+                _, dN_dxi_sub = self.shape_functions(nat_coords_sub, enforce_sign=sign)
+                J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
+                detJ = np.linalg.det(J)
+                dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+                B = cal_B_2d_vec(dN_dxy_sub)
+                w_eff = w * correction * detJ * detJi
+
+                Ke_temp += np.sum(
+                    B.transpose(0, 2, 1) @ self.C @ B * w_eff[:, None, None], axis=0
+                )
+
+            if is_valid:
+                # All sub-triangles mapped successfully without folding.
+                Ke += Ke_temp
+                break
+            else:
+                # A sub-triangle folded over.
+                force_linear = True
 
     def _integrate_partial_cut(self, Ke, tip, Nc, range, nat_x_e, rule, correction):
         x_e = self.node_coords
         Ni_template = np.zeros((3, 3))
         Ni_template[:, 0] = tip
 
-        for Ni, detJi in partial_cut_embedding_tri_iter(Nc, tip, range):
-            if detJi < 0:
-                print("DetJi smaller than 0", detJi)
-            nat_sub_x_e = nat_x_e.T @ Ni
-            x_e_i = self._base_shape_functions(nat_sub_x_e[0], nat_sub_x_e[1])[0] @ x_e
-            duffy = DuffyDistance(x_e_i)
-            u, v = rule[:, 0], rule[:, 1]
-            xi_d, eta_d, w_d = duffy.transform(u, v, beta=1)
-            n = np.array([1 - xi_d - eta_d, xi_d, eta_d])
-            xi_sub, eta_sub = nat_sub_x_e @ n
-            _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
-            J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
-            detJ = np.linalg.det(J)
-            dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-            TIP_B = cal_B_2d_vec(dN_dxy_sub[:, :, self.N_FN :])
-            w_eff = rule[:, 2] * correction * w_d * detJi * detJ * 4
-            begin_tip = self.N_DOFS
-            Ke[begin_tip:, begin_tip:] += np.sum(
-                (TIP_B.transpose(0, 2, 1) @ self.C @ TIP_B) * w_eff[:, None, None],
-                axis=0,
-            )
+        def _get_mapped_coords(
+            xi_d, eta_d, on_crack, behind_tip, nat_sub_x_e, detJi, force_linear
+        ):
+            is_on_crack = np.sum(on_crack & behind_tip) == 2
+            if is_on_crack:
+                p1_idx = np.where(~on_crack)[0][0]
+                sign = np.sign(sub_phi_n[p1_idx])
+            else:
+                sign = None
 
-            xi_d, eta_d, w_d = duffy.transform(u, v, beta=2)
-            n = np.array([1 - xi_d - eta_d, xi_d, eta_d])
-            xi_sub, eta_sub = nat_sub_x_e @ n
-            _, dN_dxi_sub = self.shape_functions(xi_sub, eta_sub)
-            J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
-            detJ = np.linalg.det(J)
-            dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
-            B = cal_B_2d_vec(dN_dxy_sub[:, :, : self.N_FN])
-            TIP_B = cal_B_2d_vec(dN_dxy_sub[:, :, self.N_FN :])
-            w_eff = rule[:, 2] * correction * w_d * detJi * detJ * 4
-            begin_tip = self.N_DOFS
-            res = np.sum(
-                B.transpose(0, 2, 1) @ self.C @ TIP_B * w_eff[:, None, None], axis=0
-            )
-            Ke[0:begin_tip, begin_tip:] += res
-            Ke[begin_tip:, 0:begin_tip] += res.T
+            if not force_linear and is_on_crack:
+                c1, c2 = np.where(on_crack)[0]
+                p4 = self._cal_curved_edge_node(nat_sub_x_e[:, c1], nat_sub_x_e[:, c2])
+                nat_sub_x_e_ext = np.column_stack([nat_sub_x_e, p4])
+
+                L = np.array([1.0 - xi_d - eta_d, xi_d, eta_d])
+                dL_dxi = np.array([[-1.0, -1.0], [1.0, 0.0], [0.0, 1.0]])
+
+                N4 = 4.0 * L[c1] * L[c2]
+                dN4_dxi = np.array(
+                    [
+                        4.0 * (dL_dxi[c1, 0] * L[c2] + L[c1] * dL_dxi[c2, 0]),
+                        4.0 * (dL_dxi[c1, 1] * L[c2] + L[c1] * dL_dxi[c2, 1]),
+                    ]
+                )
+
+                N = np.zeros((4, len(xi_d)))
+                N[:3] = L
+                N[c1] -= 0.5 * N4
+                N[c2] -= 0.5 * N4
+                N[3] = N4
+
+                dn_dxi = np.zeros((2, 4, len(xi_d)))
+                dn_dxi[:, :3, :] = dL_dxi.T[:, :, None]
+                dn_dxi[:, [c1, c2], :] -= 0.5 * dN4_dxi[:, None, :]
+                dn_dxi[:, 3, :] = dN4_dxi
+
+                dn_dxi = dn_dxi.transpose(2, 0, 1)
+
+                Ji = dn_dxi @ nat_sub_x_e_ext.T
+                detJi = np.linalg.det(Ji)
+                nat_coords_sub = nat_sub_x_e_ext @ N
+                return nat_coords_sub, detJi, sign
+            else:
+                N = np.array([1.0 - xi_d - eta_d, xi_d, eta_d])
+                nat_coords_sub = nat_sub_x_e @ N
+                return nat_coords_sub, 4 * detJi, sign
+
+        force_linear = False
+        while True:
+            Ke_temp = np.zeros_like(Ke)
+            is_valid = True
+
+            for Ni, detJi in partial_cut_embedding_tri_iter(Nc, tip, range):
+                if detJi < 0:
+                    print("DetJi smaller than 0", detJi)
+                nat_sub_x_e = nat_x_e.T @ Ni
+                N, _ = self._base_shape_functions(nat_sub_x_e)
+                sub_phi_n = N @ self.phi_n
+                sub_phi_t = N @ self.phi_t
+                on_crack = np.isclose(sub_phi_n, 0.0, atol=1e-10)
+                behind_tip = sub_phi_t < 1e-10
+
+                x_e_i = self._base_shape_functions(nat_sub_x_e)[0] @ x_e
+                duffy = DuffyDistance(x_e_i)
+                u, v = rule[:, 0], rule[:, 1]
+                N_gp = len(u)
+
+                xi_d_1, eta_d_1, w_d_1 = duffy.transform(u, v, beta=1)
+                xi_d_2, eta_d_2, w_d_2 = duffy.transform(u, v, beta=2)
+
+                xi_d_all = np.concatenate([xi_d_1, xi_d_2])
+                eta_d_all = np.concatenate([eta_d_1, eta_d_2])
+                w_d_all = np.concatenate([w_d_1, w_d_2])
+                rule_w_all = np.tile(rule[:, 2], 2)  # Repeat the Gauss weights
+
+                nat_coords_sub, detJi_mod, sign = _get_mapped_coords(
+                    xi_d_all,
+                    eta_d_all,
+                    on_crack,
+                    behind_tip,
+                    nat_sub_x_e,
+                    detJi,
+                    force_linear,
+                )
+
+                _, dN_dxi_sub = self.shape_functions(nat_coords_sub, enforce_sign=sign)
+                J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
+                detJ = np.linalg.det(J)
+                dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
+
+                w_eff_all = rule_w_all * correction * w_d_all * detJi_mod * detJ
+
+                B_all = cal_B_2d_vec(dN_dxy_sub[:, :, : self.N_FN])
+                TIP_B_all = cal_B_2d_vec(dN_dxy_sub[:, :, self.N_FN :])
+
+                begin_tip = self.N_DOFS
+
+                Ke_temp[begin_tip:, begin_tip:] += np.sum(
+                    TIP_B_all[:N_gp].transpose(0, 2, 1)
+                    @ self.C
+                    @ TIP_B_all[:N_gp]
+                    * w_eff_all[:N_gp, None, None],
+                    axis=0,
+                )
+
+                res = np.sum(
+                    B_all[N_gp:].transpose(0, 2, 1)
+                    @ self.C
+                    @ TIP_B_all[N_gp:]
+                    * w_eff_all[N_gp:, None, None],
+                    axis=0,
+                )
+                Ke_temp[0:begin_tip, begin_tip:] += res
+                Ke_temp[begin_tip:, 0:begin_tip] += res.T
+
+            if is_valid:
+                # All sub-triangles mapped successfully without folding.
+                Ke += Ke_temp
+                break
+            else:
+                # A sub-triangle folded over.
+                force_linear = True
 
     def _cubic_shape_functions(self, xi, eta):
         Q0_xi = (xi - 1) ** 2 * (xi + 2) / 4
@@ -416,9 +607,9 @@ class XQuad4n(Quad4n):
         dQ_dxi = np.stack([row1, row2]).transpose(2, 0, 1)
         return Q, dQ_dxi
 
-    def _base_shape_functions(self, xi, eta):
-        xi = np.atleast_1d(np.asarray(xi))
-        eta = np.atleast_1d(np.asarray(eta))
+    def _base_shape_functions(self, nat_coords):
+        xi = np.atleast_1d(nat_coords[0])
+        eta = np.atleast_1d(nat_coords[1])
         xi_min = 1 - xi
         xi_plus = 1 + xi
         eta_min = 1 - eta
@@ -478,37 +669,39 @@ class XQuad4n(Quad4n):
             return None
         return p
 
-    def jump_shape_functions(self, xi, eta, tip_coords):
+    def jump_shape_functions(self, nat_coords, tip_coords):
         return jump_shape_functions(
             self,
             self._base_shape_functions,
             self._base_shape_functions,
-            xi,
-            eta,
+            nat_coords,
             tip_coords,
         )
 
     def shape_functions(
-        self, xi, eta, phi_n=None, phi_t=None, dphi_n_dxi=None, dphi_t_dxi=None
+        self,
+        nat_coords,
+        phi_n=None,
+        phi_t=None,
+        dphi_n_dxi=None,
+        dphi_t_dxi=None,
+        enforce_sign=None,
     ):
-        # return enriched_shape_functions(
-        #     self, self._base_shape_functions, self._cubic_shape_functions, xi, eta
-        # )
         return enriched_shape_functions(
             self,
             self._base_shape_functions,
             self._base_shape_functions,
-            xi,
-            eta,
+            nat_coords,
             phi_n,
             phi_t,
             dphi_n_dxi,
             dphi_t_dxi,
+            enforce_sign,
         )
 
-    def cal_stresses(self, xi, eta, Ue):
+    def cal_stresses(self, nat_coords, Ue):
         Ue = np.asarray(Ue, dtype=float).ravel()
-        _, dN_dxi = self.shape_functions(xi, eta)
+        _, dN_dxi = self.shape_functions(nat_coords)
         J = dN_dxi[:, :, : self.N_FN] @ self.node_coords
         dN_dxy = np.linalg.solve(J, dN_dxi)
         B = cal_B_2d_vec(dN_dxy)
@@ -519,4 +712,4 @@ class XQuad4n(Quad4n):
     def stresses_at_nodes(self, Ue):
         xi = np.array([-1.0, 1.0, 1.0, -1.0])
         eta = np.array([-1.0, -1.0, 1.0, 1.0])
-        return self.cal_stresses(xi, eta, Ue)
+        return self.cal_stresses(np.stack([xi, eta], axis=0), Ue)
