@@ -125,16 +125,23 @@ class DofList:
         dof_numbers = self.list_dof_number[nodes - 1]
         start = dof_numbers + offset
         selected_count = np.bitwise_count(selected)
-        if np.any(selected):
-            return np.concatenate(
-                [
-                    start[i] + np.arange(selected_count[i], dtype=int)
-                    for i in range(len(nodes))
-                    if selected_count[i] != 0
-                ]
-            )
-        else:
+
+        total_selected = np.sum(selected_count)
+        if total_selected == 0:
             return np.array([], dtype=int)
+
+        valid_mask = selected_count != 0
+        valid_selected_count = selected_count[valid_mask]
+        valid_start = start[valid_mask]
+
+        res = np.repeat(valid_start, valid_selected_count)
+        block_starts = np.zeros(len(valid_selected_count), dtype=int)
+        block_starts[1:] = np.cumsum(valid_selected_count[:-1])
+        diff = np.ones(total_selected, dtype=int)
+        diff[block_starts[1:]] -= valid_selected_count[:-1]
+        diff[0] = 0  # The first element starts at the 'start' index provided
+        offsets = np.cumsum(diff)
+        return res + offsets
 
     def get_dofs(self, node):
         return self.list_dof[node - 1]
