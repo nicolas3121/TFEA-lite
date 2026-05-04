@@ -11,8 +11,18 @@ def static(model, Fg=[]):
     print("   - Kg_bc evaluated.")
     Fg_bc = model.P.T @ model.ortho_T.T @ Fg
     print("   - Fg_bc evaluated.")
+    D = Kg_bc.diagonal()
+
+    # 2. Create the sparse diagonal scaling matrix (D^-1/2)
+    D_inv_sqrt = sp.sparse.diags(1.0 / np.sqrt(D))
+
+    # 3. Scale both the matrix and the load vector
+    Kg_scaled = D_inv_sqrt @ Kg_bc @ D_inv_sqrt
+    Fg_scaled = D_inv_sqrt @ Fg_bc
+    print("   - Diagonal scaling applied.")
     print("   - Start solving for U = inv(K)F ...")
-    Ug_bc = sp.sparse.linalg.spsolve(Kg_bc, Fg_bc)
+    Ug_scaled = sp.sparse.linalg.spsolve(Kg_scaled, Fg_scaled)
+    Ug_bc = D_inv_sqrt @ Ug_scaled
     print("   - Ug_bc evaluated.")
     model.Ug = model.ortho_T @ model.P @ Ug_bc
     print("   - Ug evaluated.")

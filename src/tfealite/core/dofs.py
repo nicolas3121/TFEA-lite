@@ -118,12 +118,10 @@ class DofList:
         dofs = self.list_dof[nodes - 1]
         selected = np.bitwise_and(dofs, mask)
         preceding_mask = (selected & ((~selected) + 1)) - 1
-        # # assert np.all(preceding_mask | selected == dofs & fill_left(mask)), (
-        #     "can't account for gaps in dof numbers"
-        # )
         offset = np.bitwise_count(dofs & preceding_mask)
         dof_numbers = self.list_dof_number[nodes - 1]
         start = dof_numbers + offset
+
         selected_count = np.bitwise_count(selected)
 
         total_selected = np.sum(selected_count)
@@ -139,7 +137,7 @@ class DofList:
         block_starts[1:] = np.cumsum(valid_selected_count[:-1])
         diff = np.ones(total_selected, dtype=int)
         diff[block_starts[1:]] -= valid_selected_count[:-1]
-        diff[0] = 0  # The first element starts at the 'start' index provided
+        diff[0] = 0
         offsets = np.cumsum(diff)
         return res + offsets
 
@@ -151,13 +149,6 @@ class DofList:
 
     def remove_dofs(self, nodes, dofs):
         self.list_dof[np.asarray(nodes) - 1] &= ~dofs
-
-    # def query_dofs(self, node, query):
-    #     return self.list_dof[node - 1] & query == query
-    #
-    # def query_nodes(self, query): ...
-    #
-    #
 
 
 def get_bit_length(mask):

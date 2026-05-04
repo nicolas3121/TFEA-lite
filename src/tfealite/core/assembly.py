@@ -10,7 +10,6 @@ from .dofs import (
     BRANCH_4_DOFS,
 )
 from .level_set import CutType
-import itertools
 
 DOF_TYPES = np.array(
     [
@@ -31,9 +30,55 @@ ENRICHMENT_TYPES = np.array(
 )
 
 
+def preallocate_csr_profile(elements, dof_list):
+    total_dofs = len(dof_list)
+
+    all_rows = []
+    all_cols = []
+
+    ALL_DOFS_MASK = np.uint32(0xFFFFFFFF)
+
+    for elem in elements:
+        elem_nodes = elem[4]
+        elem_dofs = dof_list.get_elem_dof_numbers_flat(elem_nodes, ALL_DOFS_MASK)
+
+        R, C = np.meshgrid(elem_dofs, elem_dofs, indexing="ij")
+
+        all_rows.append(R.ravel())
+        all_cols.append(C.ravel())
+
+    rows_flat = np.concatenate(all_rows)
+    cols_flat = np.concatenate(all_cols)
+
+    pairs = np.column_stack((rows_flat, cols_flat))
+
+    unique_pairs = np.unique(pairs, axis=0)
+
+    final_rows = unique_pairs[:, 0]
+    final_cols = unique_pairs[:, 1]
+
+    # The 'indices' array is simply the sorted columns
+    indices = final_cols.astype(np.int32)
+
+    # To get 'indptr', we count how many non-zeros exist in each row
+    counts = np.bincount(final_rows, minlength=total_dofs)
+
+    # indptr is just the cumulative sum of the counts, starting with 0
+    indptr = np.zeros(total_dofs + 1, dtype=np.int32)
+    indptr[1:] = np.cumsum(counts)
+
+    # 4. Allocate the empty 'data' array for assembly
+    # We now know exactly how many non-zero elements are in the global matrix
+    nnz = len(indices)
+    data = np.zeros(nnz, dtype=np.float64)
+
+    # Return a fully functional, preallocated CSR matrix full of zeros
+    return sp.sparse.csr_matrix((data, indices, indptr), shape=(total_dofs, total_dofs))
+
+
 def cal_KgMg(
     model,
-    elem_func,
+    elem_func_table,
     eval_mass=False,
     xfem=False,
     tip_enrich=False,
@@ -41,20 +86,24 @@ def cal_KgMg(
     skip_elements={},
 ):
     print("=> Start evaluating stiffness matrix:")
-    Kg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
+    Kg_row_list = []
+    Kg_col_list = []
+    Kg_data_list = []
+    Mg_row_list = []
+    Mg_col_list = []
+    Mg_data_list = []
     cut_info = None
     ci = None
     if xfem:
         cut_info = model.cut_info
-        # print(cut_info)
-    if eval_mass:
-        Mg = sp.sparse.lil_matrix((len(model.list_dof), len(model.list_dof)))
     for i_e, ele_info in enumerate(model.elements):
         if (ele_info[0]) in skip_elements:
             continue
+        elem_type = ele_info[1]
+        elem_func = elem_func_table[elem_type]
         mat_id = ele_info[2]
         real_ie = ele_info[3]
-        n_nodes = len(ele_info[4])
+        len(ele_info[4])
         n_dofs = model.dof_per_node.bit_count()
         elem_nodes = np.array(ele_info[4], dtype=np.uint32)
         elem_vertices = model.nodes[elem_nodes - 1, 1 : 1 + n_dofs]
@@ -71,20 +120,18 @@ def cal_KgMg(
             t_enrich = local_dofs_per_node & BRANCH_DOFS != 0
             if h_enrich or t_enrich:
                 # voor elke node van een doorsneden element level set en tip bijhouden
-                tip = 1
+                tip = 0
                 ls = model.ls[
                     elem_nodes[
                         np.argmax(
-                            np.bitwise_and(elem_dofs, BRANCH_DOFS | HEAVISIDE_DOFS) != 0
+                            np.bitwise_and(elem_dofs, BRANCH_DOFS | HEAVISIDE_DOFS)
                         )
                     ]
                     - 1
                 ]
                 if t_enrich:
                     tip = model.tip[
-                        elem_nodes[
-                            np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0)
-                        ]
+                        elem_nodes[np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS))]
                         - 1
                     ]
                 phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
@@ -93,19 +140,13 @@ def cal_KgMg(
                     print("encountered nan in tip enriched element")
                     print("phi_n", phi_n)
                     print("phi_t", phi_t)
-                # if np.any(np.isnan(phi_n)) or np.any(np.isnan(phi_t)):
-                #     print("dofs", elem_dofs)
-                #     print("h_enrich", h_enrich, "t_enrich", t_enrich)
-                #     print("in_range", model.in_range[elem_nodes - 1])
-                #     print("nodes", elem_nodes)
-                #     print("phi_n", phi_n)
-                #     print("phi_t", phi_t)
                 assert cut_info
                 ci = cut_info.get(ele_info[0])
                 partial_cut = False
                 if ci is not None:
                     _, cut_type, _ = ci
                     partial_cut = cut_type == CutType.PARTIAL
+
                 elem = elem_func(
                     elem_vertices,
                     material,
@@ -117,7 +158,6 @@ def cal_KgMg(
                     partial_cut,
                     in_range,
                 )
-                # print("shape_functions", elem.shape_functions(0, 0)[1])
             else:
                 elem = elem_func(elem_vertices, material, real)
         else:
@@ -141,46 +181,59 @@ def cal_KgMg(
             is_present = np.bitwise_count(
                 np.bitwise_and(DOF_TYPES[:, None], elem_dofs)
             ).ravel()
-            is_present_offsets = np.cumsum(is_present)
-            absent_offsets = np.cumsum(
-                np.bitwise_count(
-                    np.bitwise_and(
-                        local_dofs_per_node,
-                        np.bitwise_and(DOF_TYPES[:, None], np.bitwise_not(elem_dofs)),
-                    )
+            absent = np.bitwise_count(
+                np.bitwise_and(
+                    local_dofs_per_node,
+                    np.bitwise_and(DOF_TYPES[:, None], np.bitwise_not(elem_dofs)),
                 )
-            )
-            ranges = [
-                range(
-                    is_present_offsets[i] - is_present[i] + absent_offsets[i],
-                    is_present_offsets[i] + absent_offsets[i],
-                )
-                for i in range(3 * n_nodes)
-                if is_present[i] != 0
-            ]
-            ranges = list(itertools.chain.from_iterable(ranges))
+            ).ravel()
+            counts = np.empty(len(is_present) * 2, dtype=int)
+            counts[0::2] = absent
+            counts[1::2] = is_present
+            values = np.empty(len(is_present) * 2, dtype=bool)
+            values[0::2] = False
+            values[1::2] = True
+            selected = np.where(np.repeat(values, counts))[0]
         else:
-            ranges = range(Ke.shape[0])
-        for ii, gii in enumerate(ranges):
-            for jj, gjj in enumerate(ranges):
-                Kg[DOFs[ii], DOFs[jj]] += Ke[gii, gjj]
-                if eval_mass:
-                    Mg[DOFs[ii], DOFs[jj]] += Me[gii, gjj]
+            selected = np.arange(Ke.shape[0])
+        Ke_selected = Ke[np.ix_(selected, selected)]
+        row_dofs, col_dofs = np.meshgrid(DOFs, DOFs, indexing="ij")
+        Kg_row_list.append(row_dofs.ravel())
+        Kg_col_list.append(col_dofs.ravel())
+        Kg_data_list.append(Ke_selected.ravel())
+        if eval_mass:
+            Me_selected = Me[np.ix_(selected, selected)]
+            Mg_row_list.append(row_dofs.ravel())
+            Mg_col_list.append(col_dofs.ravel())
+            Mg_data_list.append(Me_selected.ravel())
+
         if (i_e + 1) % 1000 == 0:
             print(
                 f"   - e {i_e + 1} ({ele_info[1]}) of {len(model.elements)} evaluated"
             )
     print(".. Stiffness & mass matrix completed!")
-    Kg = Kg.tocsr()
+    row_list_combined = np.concatenate(Kg_row_list)
+    col_list_combined = np.concatenate(Kg_col_list)
+    data_list_combined = np.concatenate(Kg_data_list)
+    Kg = sp.sparse.coo_matrix(
+        (data_list_combined, (row_list_combined, col_list_combined)),
+        shape=(len(model.list_dof), len(model.list_dof)),
+    ).tocsr()
     Kg = 0.5 * (Kg + Kg.transpose())
     if eval_mass:
-        Mg = Mg.tocsr()
+        row_list_combined = np.concatenate(Mg_row_list)
+        col_list_combined = np.concatenate(Mg_col_list)
+        data_list_combined = np.concatenate(Mg_data_list)
+        Mg = sp.sparse.coo_matrix(
+            (data_list_combined, (row_list_combined, col_list_combined)),
+            shape=(len(model.list_dof), len(model.list_dof)),
+        ).tocsr()
         Mg = 0.5 * (Mg + Mg.transpose())
-    model.Kg = Kg
-    if eval_mass:
         model.Mg = Mg
+    model.Kg = Kg
     print(".. Starting orthogonalization")
     if xfem:
+        # if False:
         T_global = quasi_gram_schmidt(model, Kg)
         model.ortho_T = T_global
     else:
@@ -246,8 +299,13 @@ def quasi_gram_schmidt(model, Kg):
                 )
 
                 coef = np.divide(
-                    num, denom, out=np.zeros_like(num), where=(np.abs(denom) >= 1e-12)
+                    num, denom, out=np.zeros_like(num), where=(np.abs(denom) >= 1e-14)
                 )
+                # print("Kg_local_slice", Kg_local[:, j_start:j_end, :].shape)
+                # print(
+                #     "other part",
+                #     (coef[:, None, None] * Kg_local[:, i_start:i_end, :]).shape,
+                # )
 
                 Kg_local[:, j_start:j_end, :] -= (
                     coef[:, None, None] * Kg_local[:, i_start:i_end, :]
@@ -266,11 +324,6 @@ def quasi_gram_schmidt(model, Kg):
         data_list.append(vals)
 
     node_numbers = [
-        # 1
-        # + np.where(
-        #     (model.list_dof.list_dof & HEAVISIDE_DOFS != 0)
-        #     & (model.list_dof.list_dof & BRANCH_DOFS == 0)
-        # )[0],
         1
         + np.where(
             (model.list_dof.list_dof & HEAVISIDE_DOFS == 0)
