@@ -9,7 +9,12 @@ from tfealite.elements.utils import cut_embedding_tri_iter
 def main():
     # 1. Setup the Worst-Case "Massive Bulge" scenario
     node_coords = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
-    phi_n = np.array([-0.1, 0.3, -0.1, -0.1])
+    phi_n = np.array([-0.1, 1.5, -0.1, -0.5])
+    phi_n = [-0.09591789, 0.05579515, 0.09877448, 0.00756507]
+
+    # phi_n = [0.19565137, -0.06461781, -0.12080768, 0.08857537]
+
+    # phi_n = np.array([0.0, -1, 0.0, 0.5])
     phi_t = np.ones(4)  # Dummy array, not used for h_enrich
 
     material = {"E": 1, "nu": 0.3, "rho": 1}
@@ -48,7 +53,7 @@ def main():
                 linewidth=1.5,
                 linestyle=":",
                 zorder=3,
-                label="Sub-Triangle Edge",
+                label="Sub-triangle edge",
             )
 
             # Use your exact logic to check if this sub-triangle is on the crack
@@ -64,7 +69,7 @@ def main():
                     color="orange",
                     alpha=0.15,
                     zorder=1,
-                    label="Crack-adjacent Sub-triangle",
+                    label="Crack-adjacent sub-triangle",
                 )
 
                 on_crack_indices = np.where(on_crack)[0]
@@ -98,7 +103,7 @@ def main():
                     "b-",
                     linewidth=4,
                     zorder=5,
-                    label="Your Quadratic Fit ($O(h^3)$)",
+                    label="Quadratic fit",
                 )
                 plt.plot(
                     p4[0],
@@ -106,7 +111,7 @@ def main():
                     "bo",
                     markersize=9,
                     zorder=6,
-                    label="Your Calculated Mid-Node",
+                    label="Quadratic edge node",
                 )
                 plt.plot(
                     [p2[0], p3[0]],
@@ -114,7 +119,7 @@ def main():
                     "r--",
                     linewidth=2.5,
                     zorder=4,
-                    label="Standard Linear Secant",
+                    label="Standard linear fit",
                 )
 
     # Run the plotting logic on both parent triangles using your dynamic NATs
@@ -132,7 +137,7 @@ def main():
 
     plt.contour(X, Y, Phi, levels=[0], colors="black", linewidths=2.5, zorder=2)
     # Dummy plot to get the contour line in the legend
-    plt.plot([], [], color="black", linewidth=2.5, label="True Bilinear Interface")
+    plt.plot([], [], color="black", linewidth=2.5, label="True bilinear interface")
 
     # 4. Presentation Formatting
     plt.plot(
@@ -165,9 +170,9 @@ def main():
             label="Parent Diagonal Split",
         )
 
-    plt.title(
-        "XQuad4n: Sub-Triangulation & Piecewise Quadratic Fitting", fontsize=16, pad=15
-    )
+    # plt.title(
+    #     "XQuad4n: Sub-Triangulation & Piecewise Quadratic Fitting", fontsize=16, pad=15
+    # )
     plt.xlim(-1.05, 1.05)
     plt.ylim(-1.05, 1.05)
     plt.gca().set_aspect("equal", adjustable="box")
@@ -179,14 +184,14 @@ def main():
 
     # Custom ordering for the legend
     order = [
-        "Quad4n Boundary",
-        "Parent Diagonal Split",
-        "Sub-Triangle Edge",
-        "Crack-adjacent Sub-triangle",
-        "True Bilinear Interface",
-        "Standard Linear Secant",
-        "Your Quadratic Fit ($O(h^3)$)",
-        "Your Calculated Mid-Node",
+        "Quad4n boundary",
+        "Parent diagonal split",
+        "Sub-triangle edge",
+        "Crack-adjacent sub-triangle",
+        "True bilinear interface",
+        "Standard linear fit",
+        "Quadratic fit",
+        "Quadratic edge node",
     ]
     ordered_handles = [by_label[k] for k in order if k in by_label]
     ordered_labels = [k for k in order if k in by_label]
@@ -200,6 +205,7 @@ def main():
         framealpha=0.9,
     )
     plt.tight_layout()
+    plt.savefig("Quad_folding_sub_element.pdf")
     plt.show()
 
 

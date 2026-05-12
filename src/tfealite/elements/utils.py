@@ -44,6 +44,14 @@ def cal_B_2d_vec(dN_dxy):
     return B
 
 
+def cal_N_2d_vec(N):
+    DOFS: Final = 2
+    N_2d = np.zeros((N.shape[0], 2, DOFS * N.shape[1]))
+    N_2d[:, 0, ::DOFS] = N[:, :]
+    N_2d[:, 0, 1::2] = N[:, :]
+    return N_2d
+
+
 def cal_B_3d_vec(dN_dxy):
     DOFS: Final = 3
     B = np.zeros((dN_dxy.shape[0], 6, DOFS * dN_dxy.shape[2]))
@@ -176,8 +184,12 @@ def partial_cut_embedding_tetr_iter(Nc, tip, tip_on_interface, range_iter=range(
         if np.isclose(detJik, 0.0, atol=1e-12):
             continue
 
+        # print(len(singular_cols))
         if detJik < 0:
-            Nik[:, [2, 3]] = Nik[:, [3, 2]]
+            if len(regular_cols) >= 2:
+                Nik[:, [2, 3]] = Nik[:, [3, 2]]
+            else:
+                Nik[:, [0, 1]] = Nik[:, [1, 0]]
             detJik = -detJik
 
         yield Nik, detJik, len(singular_cols)
@@ -192,8 +204,39 @@ def cut_embedding_tri_iter(Nc, range=range(4)):
         else:
             Ni = Nc.copy()
         detJi = np.linalg.det(Ni)
-        if not np.isclose(detJi, 0.0):
+        if not np.isclose(detJi, 0.0, atol=1e-10):
             yield Ni, detJi
+
+
+# def cut_embedding_elem_iter_2d(Nc, phi_n, range=range(4)):
+#     phi_n_intersections = phi_n @ Nc
+#     Ni_pos = []
+#     Ni_neg = []
+#     for i in range:
+#         if i != 3:
+#             Ni = np.eye(3)
+#             Ni[:, (i + 1) % 3] = Nc[:, i]
+#             Ni[:, (i + 2) % 3] = Nc[:, (i + 2) % 3]
+#             phi_n_sum = (
+#                 phi_n[i] + phi_n_intersections[i] + phi_n_intersections[(i + 2) % 3]
+#             )
+#             phi_n_i = np.zeros(3)
+#             phi_n_i[i] = phi_n[i]
+#             phi_n_i[[(i + 1 % 3), (i + 2 % 3)]] = phi_n_intersections[[i, (i + 2) % 3]]
+#             sign_sum = np.sum(
+#                 (1 - np.isclose(phi_n_i, 0.0, atol=1e-12)) * np.sign(phi_n_i)
+#             )
+#         else:
+#             Ni = Nc.copy()
+#             sign_sum = np.sum((1 - np.isclose(phi_n, 0.0, atol=1e-12)) * np.sign(phi_n))
+#
+#         detJi = np.linalg.det(Ni)
+#         if not np.isclose(detJi, 0.0, atol=1e-8):
+#             if sign_sum < 0:
+#                 Ni_neg.append(Ni)
+#             else:
+#                 Ni_pos.append(Ni)
+#     Ni_merged = []
 
 
 def partial_cut_embedding_tri_iter(Nc, tip, range):
@@ -204,7 +247,7 @@ def partial_cut_embedding_tri_iter(Nc, tip, range):
         Ni[int((i % 5 + 1) / 2), 1 + i % 2] = 1
         Ni[:, 2 - i % 2] = Nc[:, int(i / 2)]
         detJi = np.linalg.det(Ni)
-        if not np.isclose(detJi, 0):
+        if not np.isclose(detJi, 0, atol=1e-10):
             yield Ni, detJi
 
 
@@ -336,13 +379,13 @@ def fill_element_displacement(elem_nodes, list_dof, Ug):
     if len(DOFs) < len(Ue):
         is_present = np.bitwise_count(
             np.bitwise_and(DOF_TYPES[:, None], elem_dofs)
-        ).flatten()
+        ).ravel()
         absent = np.bitwise_count(
             np.bitwise_and(
                 local_dofs_per_node,
                 np.bitwise_and(DOF_TYPES[:, None], np.bitwise_not(elem_dofs)),
             )
-        ).flatten()
+        ).ravel()
         counts = np.empty(len(is_present) * 2, dtype=int)
         counts[0::2] = absent
         counts[1::2] = is_present
@@ -354,6 +397,184 @@ def fill_element_displacement(elem_nodes, list_dof, Ug):
     else:
         Ue[:] = Ueg
     return Ue
+
+
+# def enriched_shape_functions(
+#     elem,
+#     shape_fn,
+#     pu_fn,
+#     nat_coords,
+#     phi_n=None,
+#     phi_t=None,
+#     dphi_n_dxi=None,
+#     dphi_t_dxi=None,
+#     enforce_sign=None,
+# ):
+#     n_points = nat_coords.shape[1]
+#     N = np.empty(
+#         (
+#             n_points,
+#             elem.N_FN
+#             + int(elem.h_enrich) * elem.H_FN
+#             + int(elem.t_enrich) * elem.TIP_FN,
+#         )
+#     )
+#     dN_dxi = np.empty(
+#         (
+#             n_points,
+#             elem.DOFS,
+#             elem.N_FN
+#             + int(elem.h_enrich) * elem.H_FN
+#             + int(elem.t_enrich) * elem.TIP_FN,
+#         )
+#     )
+#     (N[:, : elem.N_FN], dN_dxi[:, :, : elem.N_FN]) = shape_fn(nat_coords)
+#     if pu_fn is not None:
+#         Q, dQ_dxi = pu_fn(nat_coords)
+#     else:
+#         Q, dQ_dxi = N[:, : elem.N_FN], dN_dxi[:, :, : elem.N_FN]
+#
+#     if phi_n is None or phi_t is None:
+#         phi_n = np.sum(elem.phi_n * N[:, : elem.N_FN], axis=1)
+#         phi_t = np.sum(elem.phi_t * N[:, : elem.N_FN], axis=1)
+#     to_flip = None
+#     if enforce_sign is not None:
+#         to_flip = (phi_n != 0.0) & (np.sign(phi_n) != enforce_sign)
+#         if np.any(to_flip):
+#             print("warning had to flip", np.sum(to_flip))
+#             print("phi_n:", elem.phi_n)
+#         phi_n[to_flip] *= -1
+#
+#     if elem.h_enrich:
+#         assert phi_n is not None and phi_t is not None
+#         h_shifted = (np.sign(phi_n)[:, None] - np.sign(elem.phi_n)) / 2
+#         begin_h, end_h = elem.N_FN, elem.N_FN + elem.H_FN
+#         N[:, begin_h:end_h] = h_shifted * N[:, : elem.N_FN]
+#         dN_dxi[:, :, begin_h:end_h] = h_shifted[:, None, :] * dN_dxi[:, :, : elem.N_FN]
+#     if elem.t_enrich:
+#         if dphi_n_dxi is None or dphi_t_dxi is None:
+#             dphi_n_dxi = np.sum(elem.phi_n * dN_dxi[:, :, : elem.N_FN], axis=2)
+#             dphi_t_dxi = np.sum(elem.phi_t * dN_dxi[:, :, : elem.N_FN], axis=2)
+#         if enforce_sign is not None:
+#             dphi_n_dxi[to_flip] *= -1
+#         r = np.sqrt(phi_n**2 + phi_t**2)
+#         r = np.maximum(r, 1e-14)  # avoid divide by zero
+#         sqrt_r = np.sqrt(r)
+#         sqrt_r_i = (elem.phi_n**2 + elem.phi_t**2) ** (1 / 4)
+#         theta = np.atan2(phi_n, phi_t)
+#         theta_i = np.atan2(elem.phi_n, elem.phi_t)
+#         # sin(theta) = phi_n / r, cos(theta) = phi_t / r
+#         dr_dxi = (
+#             1 / r[:, None] * (phi_n[:, None] * dphi_n_dxi + phi_t[:, None] * dphi_t_dxi)
+#         )  # = np.sin(theta) * dphi_n_dxi - np.cos(theta) * dphi_t_dxi
+#         dtheta_dxi = (dphi_n_dxi * phi_t[:, None] - phi_n[:, None] * dphi_t_dxi) / (
+#             phi_t**2 + phi_n**2
+#         )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
+#         bf = branch_functions(sqrt_r, theta).T
+#         bf_i = branch_functions(sqrt_r_i, theta_i).T
+#
+#         half_cos = np.cos(theta[:, None] / 2)
+#         half_sin = np.sin(theta[:, None] / 2)
+#         cos = np.cos(theta[:, None])
+#         sin = np.sin(theta[:, None])
+#
+#         dbf_dxi = 1 / (2 * sqrt_r[:, None, None]) * dr_dxi.reshape(
+#             (-1, elem.DOFS, 1)
+#         ) * (bf / sqrt_r[:, None])[:, None, :] + sqrt_r[:, None, None] * np.array(
+#             [
+#                 half_cos * dtheta_dxi / 2,
+#                 -half_sin * dtheta_dxi / 2,
+#                 half_cos * dtheta_dxi / 2 * sin + half_sin * cos * dtheta_dxi,
+#                 -half_sin * dtheta_dxi / 2 * sin + half_cos * cos * dtheta_dxi,
+#             ]
+#         ).transpose(1, 2, 0)
+#
+#         # dbf_dxi = 1 / (2 * sqrt_r[:, None, None]) * dr_dxi.reshape(
+#         #     (-1, elem.DOFS, 1)
+#         # ) * (bf / sqrt_r[:, None])[:, None, :] + sqrt_r[:, None, None] * np.array(
+#         #     [
+#         #         np.cos(theta[:, None] / 2) * dtheta_dxi / 2,
+#         #         -np.sin(theta[:, None] / 2) * dtheta_dxi / 2,
+#         #         np.cos(theta[:, None] / 2) * dtheta_dxi / 2 * np.sin(theta[:, None])
+#         #         + np.sin(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
+#         #         -np.sin(theta[:, None] / 2) * dtheta_dxi / 2 * np.sin(theta[:, None])
+#         #         + np.cos(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
+#         #     ]
+#         # ).transpose(1, 2, 0)
+#
+#         ramp = np.sum(N[:, np.where(elem.in_range)[0]], axis=1)
+#         dramp_dxi = np.sum(dN_dxi[:, :, np.where(elem.in_range)[0]], axis=2)
+#
+#         ramped_bf = bf * ramp[:, None]
+#
+#         ramp_i = elem.in_range.astype(float)
+#         ramped_shifter = bf_i * ramp_i[:, None]
+#
+#         interpolant = np.sum(
+#             ramped_shifter[None, :, :] * N[:, : elem.N_FN, None], axis=1
+#         )
+#
+#         # interpolant = np.sum(bf_i[None, :, :] * N[:, : elem.N_FN, None], axis=1)
+#         # bf_shifted = bf - interpolant
+#
+#         bf_shifted = ramped_bf - interpolant
+#
+#         begin_tip = elem.N_FN + int(elem.h_enrich) * elem.H_FN
+#         end_tip = begin_tip + elem.TIP_FN
+#
+#         N[:, begin_tip:end_tip] = (bf_shifted[:, None, :] * Q[:, :, None]).reshape(
+#             -1, elem.TIP_FN
+#         )
+#
+#         # N[:, begin_tip:end_tip] = (
+#         #     ramp[:, None, None] * bf_shifted[:, None, :] * Q[:, :, None]
+#         # ).reshape(-1, elem.TIP_FN)
+#
+#         dramped_bf_dxi = (
+#             dramp_dxi[:, :, None] * bf[:, None, :] + ramp[:, None, None] * dbf_dxi
+#         )
+#
+#         dinterpolant_dxi = np.sum(
+#             ramped_shifter[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
+#         )
+#
+#         dbf_shifted_dxi = dramped_bf_dxi - dinterpolant_dxi
+#
+#         term_A = dbf_shifted_dxi[:, None, :, :] * Q[:, :, None, None]
+#         term_B = bf_shifted[:, None, None, :] * dQ_dxi[:, :, :, None]
+#
+#         # dbf_shifted_dxi = dbf_dxi - np.sum(
+#         #     bf_i[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
+#         # )
+#         #
+#         # term_A = (
+#         #     dbf_shifted_dxi[:, None, :, :]
+#         #     * ramp[:, None, None, None]
+#         #     * Q[:, :, None, None]
+#         # )
+#         #
+#         # term_B = (
+#         #     bf_shifted[:, None, None, :]
+#         #     * dramp_dxi[:, :, None, None]
+#         #     * Q[:, None, :, None]
+#         # )
+#         #
+#         # term_C = (
+#         #     bf_shifted[:, None, None, :]
+#         #     * ramp[:, None, None, None]
+#         #     * dQ_dxi[:, :, :, None]
+#         # )
+#         #
+#         # combined_terms = term_A.swapaxes(1, 2) + term_B + term_C
+#
+#         combined_terms = term_A.swapaxes(1, 2) + term_B
+#
+#         N_points, N_dims = combined_terms.shape[0], combined_terms.shape[1]
+#
+#         dN_dxi[:, :, begin_tip:end_tip] = combined_terms.reshape(
+#             N_points, N_dims, elem.TIP_FN
+#         )
+#     return N, dN_dxi
 
 
 def enriched_shape_functions(
@@ -399,6 +620,7 @@ def enriched_shape_functions(
         to_flip = (phi_n != 0.0) & (np.sign(phi_n) != enforce_sign)
         if np.any(to_flip):
             print("warning had to flip", np.sum(to_flip))
+            print("phi_n:", elem.phi_n)
         phi_n[to_flip] *= -1
 
     if elem.h_enrich:
@@ -429,54 +651,88 @@ def enriched_shape_functions(
         bf = branch_functions(sqrt_r, theta).T
         bf_i = branch_functions(sqrt_r_i, theta_i).T
 
+        half_cos = np.cos(theta[:, None] / 2)
+        half_sin = np.sin(theta[:, None] / 2)
+        cos = np.cos(theta[:, None])
+        sin = np.sin(theta[:, None])
+
         dbf_dxi = 1 / (2 * sqrt_r[:, None, None]) * dr_dxi.reshape(
             (-1, elem.DOFS, 1)
         ) * (bf / sqrt_r[:, None])[:, None, :] + sqrt_r[:, None, None] * np.array(
             [
-                np.cos(theta[:, None] / 2) * dtheta_dxi / 2,
-                -np.sin(theta[:, None] / 2) * dtheta_dxi / 2,
-                np.cos(theta[:, None] / 2) * dtheta_dxi / 2 * np.sin(theta[:, None])
-                + np.sin(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
-                -np.sin(theta[:, None] / 2) * dtheta_dxi / 2 * np.sin(theta[:, None])
-                + np.cos(theta[:, None] / 2) * np.cos(theta[:, None]) * dtheta_dxi,
+                half_cos * dtheta_dxi / 2,
+                -half_sin * dtheta_dxi / 2,
+                half_cos * dtheta_dxi / 2 * sin + half_sin * cos * dtheta_dxi,
+                -half_sin * dtheta_dxi / 2 * sin + half_cos * cos * dtheta_dxi,
             ]
         ).transpose(1, 2, 0)
 
         ramp = np.sum(N[:, np.where(elem.in_range)[0]], axis=1)
         dramp_dxi = np.sum(dN_dxi[:, :, np.where(elem.in_range)[0]], axis=2)
 
-        ramped_bf = bf * ramp[:, None]
+        # ramped_bf = bf * ramp[:, None]
+        #
+        # ramp_i = elem.in_range.astype(float)
+        # ramped_shifter = bf_i * ramp_i[:, None]
+        #
+        # interpolant = np.sum(
+        #     ramped_shifter[None, :, :] * N[:, : elem.N_FN, None], axis=1
+        # )
 
-        ramp_i = elem.in_range.astype(float)
-        ramped_shifter = bf_i * ramp_i[:, None]
+        interpolant = np.sum(bf_i[None, :, :] * N[:, : elem.N_FN, None], axis=1)
+        bf_shifted = bf - interpolant
 
-        interpolant = np.sum(
-            ramped_shifter[None, :, :] * N[:, : elem.N_FN, None], axis=1
-        )
-
-        bf_shifted = ramped_bf - interpolant
-
+        # bf_shifted = ramped_bf - interpolant
+        #
         begin_tip = elem.N_FN + int(elem.h_enrich) * elem.H_FN
         end_tip = begin_tip + elem.TIP_FN
+        #
+        # N[:, begin_tip:end_tip] = (bf_shifted[:, None, :] * Q[:, :, None]).reshape(
+        #     -1, elem.TIP_FN
+        # )
 
-        N[:, begin_tip:end_tip] = (bf_shifted[:, None, :] * Q[:, :, None]).reshape(
-            -1, elem.TIP_FN
+        N[:, begin_tip:end_tip] = (
+            ramp[:, None, None] * bf_shifted[:, None, :] * Q[:, :, None]
+        ).reshape(-1, elem.TIP_FN)
+
+        # dramped_bf_dxi = (
+        #     dramp_dxi[:, :, None] * bf[:, None, :] + ramp[:, None, None] * dbf_dxi
+        # )
+        #
+        # dinterpolant_dxi = np.sum(
+        #     ramped_shifter[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
+        # )
+        #
+        # dbf_shifted_dxi = dramped_bf_dxi - dinterpolant_dxi
+        #
+        # term_A = dbf_shifted_dxi[:, None, :, :] * Q[:, :, None, None]
+        # term_B = bf_shifted[:, None, None, :] * dQ_dxi[:, :, :, None]
+
+        dbf_shifted_dxi = dbf_dxi - np.sum(
+            bf_i[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
         )
 
-        dramped_bf_dxi = (
-            dramp_dxi[:, :, None] * bf[:, None, :] + ramp[:, None, None] * dbf_dxi
+        term_A = (
+            dbf_shifted_dxi[:, None, :, :]
+            * ramp[:, None, None, None]
+            * Q[:, :, None, None]
         )
 
-        dinterpolant_dxi = np.sum(
-            ramped_shifter[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
+        term_B = (
+            bf_shifted[:, None, None, :]
+            * dramp_dxi[:, :, None, None]
+            * Q[:, None, :, None]
         )
 
-        dbf_shifted_dxi = dramped_bf_dxi - dinterpolant_dxi
+        term_C = (
+            bf_shifted[:, None, None, :]
+            * ramp[:, None, None, None]
+            * dQ_dxi[:, :, :, None]
+        )
 
-        term_A = dbf_shifted_dxi[:, None, :, :] * Q[:, :, None, None]
-        term_B = bf_shifted[:, None, None, :] * dQ_dxi[:, :, :, None]
+        combined_terms = term_A.swapaxes(1, 2) + term_B + term_C
 
-        combined_terms = term_A.swapaxes(1, 2) + term_B
+        # combined_terms = term_A.swapaxes(1, 2) + term_B
 
         N_points, N_dims = combined_terms.shape[0], combined_terms.shape[1]
 

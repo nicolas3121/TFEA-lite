@@ -1,10 +1,11 @@
 import numpy as np
 import scipy as sp
 
-from tfealite.core.dofs import DofType
-
 
 def dirichlet_Lagrange_II(model, fix_dofs):
+    if model.ghost_dofs is not None:
+        fix_dofs = np.concatenate([fix_dofs, model.ghost_dofs])
+
     model.fix_dofs = fix_dofs
     print(f"=> P matrix started, including {len(fix_dofs)} dofs to eliminate")
     n = model.list_dof.n_dof
@@ -48,7 +49,7 @@ def gen_dirichlet_bc(model, sel_condition, tol=1e-8):
     model.gen_P(fix_dofs)
 
 
-def my_gen_dirichlet_bc(model, sel_condition, extra_nodes, tol=1e-8):
+def my_gen_dirichlet_bc(model, sel_condition, extra_fix_dofs, tol=1e-8):
     fix_dofs = []
     for node in model.nodes:
         nid = int(node[0])
@@ -58,11 +59,9 @@ def my_gen_dirichlet_bc(model, sel_condition, extra_nodes, tol=1e-8):
             for offset in range(0, np.bitwise_count(model.dof_per_node)):
                 fix_dofs.append(model.list_dof[(nid, 1 << offset)])
 
-    extra_fix_dofs = model.list_dof.get_elem_dof_numbers(
-        extra_nodes, DofType.HX | DofType.HY
-    ).flatten()
-    for dof in extra_fix_dofs:
-        fix_dofs.append(dof)
+    # extra_fix_dofs = model.list_dof.get_elem_dof_numbers(
+    #     extra_nodes, DofType.HX | DofType.HY
+    # ).flatten()
     for dof in extra_fix_dofs:
         fix_dofs.append(dof)
 

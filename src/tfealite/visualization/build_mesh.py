@@ -86,7 +86,7 @@ def build_XQuad4n(model, mult=1.0):
         displacements.append(node_disps)
 
         nat_x_e = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
-        stresses.append(elem.cal_stresses(nat_x_e[:, 0], nat_x_e[:, 1], Ue))
+        stresses.append(elem.cal_stresses(nat_x_e.T, Ue))
 
     points_ref, faces, displacements, node_stress = [], [], [], []
 
@@ -314,7 +314,7 @@ def build_XTetr4n(model, mult=1.0):
     ):
         for Ni, *_ in tetr_iterator:
             centroid = np.mean(Ni, axis=1, keepdims=True)
-            Ni = centroid + (Ni - centroid) * 0.99
+            Ni = centroid + (Ni - centroid) * 0.99999
 
             sub_nat_x_e = Ni.T @ nat_x_e
             sub_shape_funcs = elem.shape_functions(sub_nat_x_e.T)[0]
@@ -375,7 +375,7 @@ def build_XTetr4n(model, mult=1.0):
         most_enriched_node = elem_nodes[most_enriched_idx]
 
         ls = model.ls[most_enriched_node - 1]
-        tip = 1
+        tip = 0
 
         if t_enrich:
             tip = model.tip[
@@ -560,46 +560,6 @@ def my_build_Tetr4n(model, mult=1.0):
     mesh.cell_data["is_enriched"] = is_enriched
 
     return mesh
-
-
-# def my_build_Quad4n(model, node_stress=None):
-#     nodes = np.asarray(model.nodes)
-#     points_ref = nodes[:, 1:4]
-#     faces = []
-#     cell_eids = []
-#     cell_dofs_per_node = []
-#     is_cut = []
-#     displacements = np.zeros_like(points_ref)
-#     displacements[:, :2] = model.Ug[
-#         model.list_dof.get_elem_dof_numbers_flat(
-#             1 + np.arange(nodes.shape[0]), BASE_DOFS
-#         )
-#     ].reshape((-1, 2))
-#     for element in model.elements:
-#         eid, _, mat_id, real_id, elem_nodes = element
-#         elem_nodes = np.asarray(elem_nodes)
-#         elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
-#         elem_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
-#         faces.append(4)
-#         faces += list(elem_nodes - 1)
-#         cell_eids.append(eid)
-#         cell_dofs_per_node.append(elem_dofs_per_node)
-#         is_cut_elem = model.cut_info.get(eid)
-#         if is_cut_elem is not None:
-#             _, cut_type, _ = is_cut_elem
-#             is_cut.append(cut_type == CutType.CUT or cut_type == CutType.PARTIAL)
-#         else:
-#             is_cut.append(False)
-#     points = points_ref + displacements
-#     faces_flat = np.array(faces)
-#     points_ref = nodes[:, 1:4]
-#     mesh = pv.PolyData(points, faces_flat)
-#     mesh.point_data["points_ref"] = points_ref
-#     mesh.point_data["displacement"] = displacements
-#     mesh.cell_data["eid"] = np.asarray(cell_eids, dtype=int)
-#     mesh.cell_data["dofs_per_node"] = np.asarray(cell_dofs_per_node)
-#     mesh.cell_data["is_cut"] = np.asarray(is_cut)
-#     return mesh
 
 
 def build_Quad4n(nodes, elements, node_stress=None):

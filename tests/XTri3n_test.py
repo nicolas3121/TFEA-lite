@@ -151,6 +151,36 @@ def test_duffy_sinh_transform():
     assert np.isclose(duffy_numeric, correct2), "1 / r^(3 / 2)"
 
 
+def integrate_singular_distorted_sympy(nodes):
+    """
+    Computes ground truth: Integral of 1/sqrt(x^2 + y^2) over a triangle.
+    Singularity is assumed to be at nodes[0] which is (0,0).
+    """
+    x, y = sp.symbols("x y")
+    # For 1/r, the polar integrand is (1/r) * r = 1.
+    # So we are essentially integrating 1 * dr * dtheta.
+    r, theta = sp.symbols("r theta", positive=True)
+
+    # Calculate angular bounds for the two edges meeting at the origin
+    theta_start = np.arctan2(nodes[1][1], nodes[1][0])
+    theta_end = np.arctan2(nodes[2][1], nodes[2][0])
+
+    # Equation of the line (edge 2-3) connecting (x2, y2) and (x3, y3)
+    # Ax + By + C = 0
+    x2, y2 = nodes[1]
+    x3, y3 = nodes[2]
+    A = y2 - y3
+    B = x3 - x2
+    C = x2 * y3 - x3 * y2
+
+    # In polar: r(A*cos(theta) + B*sin(theta)) + C = 0
+    r_limit = -C / (A * sp.cos(theta) + B * sp.sin(theta))
+
+    # Integrate 1 * dr dtheta
+    exact = sp.integrate(r_limit, (theta, theta_start, theta_end))
+    return float(exact.evalf())
+
+
 # def test_partial_cut():
 #     nodes = np.array([[0, 0], [1, 0], [0, 1]])
 #     material = {"E": 1, "nu": 0.3, "rho": 1}

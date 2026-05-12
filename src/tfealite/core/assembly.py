@@ -1,4 +1,5 @@
 import numpy as np
+
 import scipy as sp
 from .dofs import (
     BASE_DOFS,
@@ -162,10 +163,7 @@ def cal_KgMg(
                 elem = elem_func(elem_vertices, material, real)
         else:
             elem = elem_func(elem_vertices, material, real)
-        if eval_mass:
-            Me, Ke = elem.cal_element_matrices(eval_mass=True)
-        else:
-            Ke = elem.cal_element_matrices(eval_mass=False)
+        Ke, Me = elem.cal_element_matrices(eval_mass=eval_mass)
         DOFs = np.concatenate(
             (
                 model.list_dof.get_elem_dof_numbers_flat(elem_nodes, BASE_DOFS).ravel(),
@@ -233,11 +231,27 @@ def cal_KgMg(
     model.Kg = Kg
     print(".. Starting orthogonalization")
     if xfem:
-        # if False:
-        T_global = quasi_gram_schmidt(model, Kg)
-        model.ortho_T = T_global
+        if eval_mass:
+            print("using Me")
+            D = Mg.diagonal()
+            D_sqrt = np.sqrt(D)
+            D_inv_sqrt = sp.sparse.diags(1.0 / D_sqrt)
+            Mg_scaled = D_inv_sqrt @ Mg @ D_inv_sqrt
+            # 3. Run Gram-Schmidt on the SCALED matrix (Bug fixed!)
+            T_GS = quasi_gram_schmidt(model, Mg_scaled)
+
+            # 4. Bake the scaling directly into the transformation matrix
+            # 5. The Magic Step: Bake in the scaling, but strip out the stretching!
+            T_final = D_inv_sqrt @ T_GS @ sp.sparse.diags(D_sqrt)
+            # Now store T_final. The rest of your FEM code doesn't even need to know
+            # that scaling happened!
+            model.ortho_T = T_final
+        else:
+            T_global = quasi_gram_schmidt(model, Kg)
+            model.ortho_T = T_global
     else:
         model.ortho_T = sp.sparse.eye(Kg.shape[0], format="csr")
+        model.scale_T = sp.sparse.eye(Kg.shape[0], format="csr")
 
     print("=> Check sparsity of Kg: ")
     n_rows, n_cols = Kg.shape
@@ -270,7 +284,9 @@ def quasi_gram_schmidt(model, Kg):
     data_list = []
     processed_dofs = np.zeros(Kg.shape[0], dtype=bool)
 
-    def orthogonalize_at_node_batched(dof_numbers, contiguous=False):
+    def orthogonalize_at_node_batched(
+        dof_numbers, contiguous=False, skip=n_dof_per_node
+    ):
         Kg_local = np.zeros(
             (dof_numbers.shape[0], dof_numbers.shape[1], dof_numbers.shape[1])
         )
@@ -285,7 +301,7 @@ def quasi_gram_schmidt(model, Kg):
 
         T_local = np.tile(np.eye(dof_numbers.shape[1]), (Kg_local.shape[0], 1, 1))
 
-        for nj in range(n_dof_per_node, dof_numbers.shape[1], n_dof_per_node):
+        for nj in range(skip, dof_numbers.shape[1], n_dof_per_node):
             j_start = nj
             j_end = nj + n_dof_per_node
             for ni in range(0, nj, n_dof_per_node):
@@ -301,11 +317,6 @@ def quasi_gram_schmidt(model, Kg):
                 coef = np.divide(
                     num, denom, out=np.zeros_like(num), where=(np.abs(denom) >= 1e-14)
                 )
-                # print("Kg_local_slice", Kg_local[:, j_start:j_end, :].shape)
-                # print(
-                #     "other part",
-                #     (coef[:, None, None] * Kg_local[:, i_start:i_end, :]).shape,
-                # )
 
                 Kg_local[:, j_start:j_end, :] -= (
                     coef[:, None, None] * Kg_local[:, i_start:i_end, :]
@@ -328,18 +339,42 @@ def quasi_gram_schmidt(model, Kg):
         + np.where(
             (model.list_dof.list_dof & HEAVISIDE_DOFS == 0)
             & (model.list_dof.list_dof & BRANCH_DOFS != 0)
+            & (model.list_dof.list_dof & BRANCH_1_DOFS == 0)
+        )[0],
+        1
+        + np.where(
+            (model.list_dof.list_dof & HEAVISIDE_DOFS == 0)
+            & (model.list_dof.list_dof & BRANCH_DOFS != 0)
+            & (model.list_dof.list_dof & BRANCH_1_DOFS != 0)
         )[0],
         1
         + np.where(
             (model.list_dof.list_dof & HEAVISIDE_DOFS != 0)
             & (model.list_dof.list_dof & BRANCH_DOFS != 0)
+            & (model.list_dof.list_dof & BRANCH_1_DOFS == 0)
+        )[0],
+        1
+        + np.where(
+            (model.list_dof.list_dof & HEAVISIDE_DOFS != 0)
+            & (model.list_dof.list_dof & BRANCH_DOFS != 0)
+            & (model.list_dof.list_dof & BRANCH_1_DOFS != 0)
         )[0],
     ]
+    for i, nodes in enumerate(node_numbers):
+        counts = np.bitwise_count(model.list_dof.list_dof[nodes - 1])
+        if len(counts) != 0:
+            print(i, np.all(counts == counts[0]))
+            print(counts)
+        else:
+            print(i)
     dof_types = [
+        BRANCH_DOFS & (~BRANCH_4_DOFS),
         BRANCH_DOFS,
+        HEAVISIDE_DOFS | BRANCH_DOFS & (~BRANCH_4_DOFS),
         HEAVISIDE_DOFS | BRANCH_DOFS,
     ]
-    contiguous = [True, True]
+    contiguous = [True, True, True, True]
+    skip = [n_dof_per_node, n_dof_per_node, n_dof_per_node, n_dof_per_node]
 
     dof_numbers = [
         model.list_dof.get_elem_dof_numbers_flat(i, d).reshape((len(i), -1))
@@ -348,10 +383,10 @@ def quasi_gram_schmidt(model, Kg):
     ]
 
     batch_size = 1000
-    for cont, dn in zip(contiguous, dof_numbers):
+    for (cont, sk), dn in zip(zip(contiguous, skip), dof_numbers):
         n_nodes = len(dn)
         for i0 in range(0, n_nodes, batch_size):
-            orthogonalize_at_node_batched(dn[i0 : i0 + batch_size], cont)
+            orthogonalize_at_node_batched(dn[i0 : i0 + batch_size], cont, sk)
 
     unprocessed_dofs = np.where(~processed_dofs)[0]
     row_list.append(unprocessed_dofs)

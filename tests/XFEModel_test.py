@@ -20,7 +20,7 @@ def test_fully_cut_XTri3n():
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     print("full phi_n", model.level_sets[0].phi_n)
     print("full phi_t", model.level_sets[0].phi_t)
-    model.cal_global_matrices(tf.XTri3n)
+    model.cal_global_matrices({"Tri3n": tf.XTri3n})
 
     def sel_condition(x, y, z):
         return y - 0.0
@@ -94,7 +94,7 @@ def test_edge_cut_XTri3n():
 
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     print(model.list_dof.list_dof)
-    model.cal_global_matrices(tf.XTri3n)
+    model.cal_global_matrices({"Tri3n": tf.XTri3n})
 
     def sel_condition(x, y, z):
         return y - 0.0
@@ -170,7 +170,7 @@ def test_fully_cut_XQuad4n():
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     print("full phi_n", model.level_sets[0].phi_n)
     print("full phi_t", model.level_sets[0].phi_t)
-    model.cal_global_matrices(tf.XQuad4n)
+    model.cal_global_matrices({"Quad4n": tf.XQuad4n})
 
     def sel_condition(x, y, z):
         return y - 0.0
@@ -246,7 +246,7 @@ def test_edge_cut_XQuad4n():
 
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     print(model.list_dof.list_dof)
-    model.cal_global_matrices(tf.XQuad4n)
+    model.cal_global_matrices({"Quad4n": tf.XQuad4n})
 
     def sel_condition(x, y, z):
         return y - 0.0
@@ -329,7 +329,7 @@ def test_element_edge_edge_crack_no_tip_XQuad4n():
     reals = [[1, {"t": 1}]]
     model = tf.FEModel(nodes, elements, materials, reals)
     model.gen_list_dof(dof_per_node=tf.IS_2D)
-    model.cal_global_matrices(tf.Quad4n)
+    model.cal_global_matrices({"Quad4n": tf.XQuad4n})
     fix_dofs = []
     fix_dofs.append(model.list_dof[(1, tf.DofType.UX)])
     fix_dofs.append(model.list_dof[(1, tf.DofType.UY)])
@@ -371,7 +371,7 @@ def test_element_edge_edge_crack_no_tip_XQuad4n():
         np.array([-0.1, 1.0]), np.array([1.1, 1.0]), embedded=False
     )
     model.gen_list_dof(dof_per_node=tf.IS_2D)
-    model.cal_global_matrices(tf.XQuad4n)
+    model.cal_global_matrices({"Quad4n": tf.XQuad4n})
     fix_dofs = []
     fix_dofs.append(model.list_dof[(1, tf.DofType.UX)])
     fix_dofs.append(model.list_dof[(1, tf.DofType.UY)])

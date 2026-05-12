@@ -12,6 +12,8 @@ from .elements.XQuad4n import XQuad4n
 from .elements.XTri3n import XTri3n
 from .elements.Tetr4n import Tetr4n
 from .elements.XTetr4n import XTetr4n
+from .GrowthController import GrowthController
+# from .elements.Hex8n import Hex8n
 
 from .core.dofs import DofType, IS_2D, IS_3D
 
@@ -31,4 +33,5 @@ __all__ = [
     "XTri3n",
     "Tetr4n",
     "XTetr4n",
+    "GrowthController",
 ]

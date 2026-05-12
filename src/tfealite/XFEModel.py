@@ -5,6 +5,7 @@ from .core.level_set import LevelSet, CutType
 from .core import model
 from .core import assembly as asm
 from .core import dofs
+from .visualization.build_mesh import build_mesh
 
 
 class XFEModel(FEModel):
@@ -28,6 +29,8 @@ class XFEModel(FEModel):
         self.ls = np.zeros(self.n_nodes, dtype=np.int32)
         self.tip = np.zeros(self.n_nodes, dtype=np.int32)
         self.corrected = corrected
+        self.mesh = None
+        self.mesh_surface = None
         if corrected:
             self.in_range = np.zeros(self.n_nodes, dtype=np.int32)
         else:
@@ -70,10 +73,12 @@ class XFEModel(FEModel):
                         if touching:
                             # print("touching")
                             phi_n, _ = ls.get(nodes, None)
-                            filtered = nodes[np.argwhere(np.isclose(phi_n, 0))]
+                            filtered = nodes[
+                                np.argwhere(np.isclose(phi_n, 0, atol=1e-10))
+                            ]
                         else:
                             filtered = nodes
-                        phi_n, phi_t = ls.get(nodes, None)
+                        phi_n, _ = ls.get(nodes, None)
                         # print(
                         #     "id",
                         #     id,
@@ -90,9 +95,13 @@ class XFEModel(FEModel):
                             )
                             if is_in_range:
                                 self.tip[nodes - 1] = tip
-                                self.list_dof.add_dofs(nodes, IS_BRANCH)
+
                                 if self.corrected:
-                                    self.in_range[nodes - 1] = in_range
+                                    self.in_range[nodes - 1] |= in_range
+                                    self.list_dof.add_dofs(nodes, IS_BRANCH)
+                                else:
+                                    self.list_dof.add_dofs(nodes[in_range], IS_BRANCH)
+
                         self.ls[nodes - 1] = i
                         self.cut_info[id] = (i, cut_type, tip)
                 else:
@@ -103,10 +112,12 @@ class XFEModel(FEModel):
                         if is_in_range:
                             self.tip[nodes - 1] = tip
                             self.ls[nodes - 1] = i
-                            self.list_dof.add_dofs(nodes, IS_BRANCH)
                             self.cut_info[id] = (i, CutType.NONE, tip)
                             if self.corrected:
-                                self.in_range[nodes - 1] = in_range
+                                self.in_range[nodes - 1] |= in_range
+                                self.list_dof.add_dofs(nodes, IS_BRANCH)
+                            else:
+                                self.list_dof.add_dofs(nodes[in_range], IS_BRANCH)
             # for elem_id, ci in self.cut_info.items():
         for elem_id, ci in partial_cuts:
             i, cut_type, tip = ci
@@ -135,6 +146,7 @@ class XFEModel(FEModel):
         ls = LevelSet()
         ls.gen_from_line_segment(self.nodes, p1, p2, embedded=embedded)
         self.level_sets.append(ls)
+        self.mesh = build_mesh(self.nodes, self.elements)
 
     def insert_crack_spline(self, bspline, embedded, h=0.05, snapping_tolerance=0.03):
         ls = LevelSet()
@@ -147,8 +159,24 @@ class XFEModel(FEModel):
             snapping_tolerance=snapping_tolerance,
         )
         self.level_sets.append(ls)
+        self.mesh = build_mesh(self.nodes, self.elements)
 
     def insert_planar_crack_segment(self, p1, p2, p3, embedded):
         ls = LevelSet()
         ls.gen_from_plane(self.nodes, p1, p2, p3, embedded)
         self.level_sets.append(ls)
+        self.mesh = build_mesh(self.nodes, self.elements)
+        self.mesh_surface = self.mesh.extract_surface().triangulate()
+
+    def insert_ndbsplines_crack(self, ndbsplines, h, snapping_tolerance=0.03):
+        ls = LevelSet()
+        ls.gen_from_ndbsplines(
+            self.nodes,
+            ndbsplines,
+            h,
+            self.geometrical_range,
+            snapping_tolerance=snapping_tolerance,
+        )
+        self.level_sets.append(ls)
+        self.mesh = build_mesh(self.nodes, self.elements)
+        self.mesh_surface = self.mesh.extract_surface().triangulate()

@@ -2,7 +2,6 @@ from enum import Enum, auto
 from typing import Tuple
 
 import numpy as np
-from numpy.typing import NDArray
 from scipy.integrate import solve_ivp
 from scipy.interpolate import BSpline, splprep
 from scipy.spatial import KDTree
@@ -96,7 +95,7 @@ class LevelSet:
             self.mesh_tree.query_ball_point(t2_pt, geometrical_range2), dtype=int
         )
 
-        narrow_band_indices = get_narrow_band_indices(coordinates, bspline, 50, 2 * h)
+        narrow_band_indices = get_narrow_band_indices(coordinates, bspline, 50, 5 * h)
 
         indices_subset = np.unique(
             np.concatenate([narrow_band_indices, indices_near_tip1, indices_near_tip2])
@@ -189,7 +188,7 @@ class LevelSet:
         geometrical_range,
         snapping_tolerance=0.03,
     ):
-        geometrical_range = max(4 * h, 4 * geometrical_range)
+        geometrical_range = max(8 * h, 8 * geometrical_range)
         coordinates = np.asarray(nodes)[:, 1:4]
         self.mesh_tree = KDTree(coordinates)
         self.ndbsplines = ndbsplines
@@ -272,7 +271,9 @@ class LevelSet:
 
             distance = narrow_band_coords - S
             local_phi_n[narrow_band_mask] = np.sum(distance * n, axis=1)
-            local_projections[narrow_band_mask] = S
+            local_projections[narrow_band_mask] = (
+                narrow_band_coords - local_phi_n[narrow_band_mask, None] * n
+            )
 
             near_tip_mask = np.zeros_like(narrow_band_mask)
             near_tip_mask[indices_near_tip] = True
@@ -304,7 +305,10 @@ class LevelSet:
             if active:
                 local_phi_t[near_tip_mask] = near_tip_phi_t
             else:
+                # crack consists of multiple surfaces connected to eachother
+                # for nodes that lie ahead of a surface with a passive crack front (no tip enrichment), the level sets should be undefined ahead of the crack so they are not considered for the update procedure
                 local_phi_n[ahead_of_tip_indices] = np.nan
+                local_phi_t[ahead_of_tip_indices] = np.nan
 
             valid_mask = ~np.isnan(self.phi_n) & ~np.isnan(local_phi_n)
 
@@ -317,10 +321,39 @@ class LevelSet:
                 np.isnan(self.phi_n) & ~np.isnan(local_phi_n) | closer_mask
             )[0]
 
+            # to_snap = np.where(
+            #     np.isclose(local_phi_n[to_update], 0.0, atol=snapping_tolerance * h)
+            #     & ~(local_phi_t[to_update] > 0)
+            # )[0]
+
+            valid_phi_t = ~(local_phi_t[to_update] > 0.0)
+
+            is_clamped_globally = np.zeros(coordinates.shape[0], dtype=bool)
+
+            clamped_locally = (
+                np.isclose(uv_i[:, 0], 0.0, atol=1e-5)  # Back Edge
+                # | np.isclose(uv_i[:, 1], 0.0, atol=1e-5)  # Right Base
+                # | np.isclose(uv_i[:, 1], 1.0, atol=1e-5)  # Left Base
+            )
+            is_clamped_globally[narrow_band_mask] = clamped_locally
+
+            if has_pole:
+                valid_parametric = np.ones_like(to_update)
+            else:
+                valid_parametric = ~is_clamped_globally[to_update]
+
             to_snap = np.where(
                 np.isclose(local_phi_n[to_update], 0.0, atol=snapping_tolerance * h)
-                & ~(local_phi_t[to_update] > 0)
+                & valid_phi_t
+                & valid_parametric
             )[0]
+            # if np.any(to_snap):
+            #     print("still got chance to snap")
+            #     print(to_snap)
+            #     print(local_phi_n[to_update][to_snap])
+            # snapping disabled
+            # to_snap = np.zeros_like(to_snap)
+            # to_snap = np.array([], dtype=int)
 
             global_to_snap = to_update[to_snap]
 
@@ -388,14 +421,18 @@ class LevelSet:
         in_element = (N1 >= 0) & (N1 <= 1)
         actual_cuts = ~unsolvable & in_element
         n_actual_cuts = np.sum(actual_cuts)
-        touching = not (
-            np.any(
-                actual_cuts
-                & ~np.isclose(N1, 0, atol=1e-12)
-                & ~np.isclose(N1, 1, atol=1e-12)
-            )
-            or n_actual_cuts == actual_cuts.shape[0]
-        )
+        # touching = not (
+        #     np.any(
+        #         actual_cuts
+        #         & ~np.isclose(N1, 0, atol=1e-12)
+        #         & ~np.isclose(N1, 1, atol=1e-12)
+        #     )
+        #     or n_actual_cuts == actual_cuts.shape[0]
+        # )
+        has_positive = np.any(sign_n > 0)
+        has_negative = np.any(sign_n < 0)
+
+        touching = not (has_positive and has_negative)
         if n_actual_cuts == 0:
             return CutType.NONE, None, False
 
@@ -411,7 +448,7 @@ class LevelSet:
                 return CutType.PARTIAL, i, touching
         return CutType.CUT, None, touching
 
-    def in_range(self, element, radius) -> Tuple[bool, None | int, None | NDArray]:
+    def in_range(self, element, radius):
         assert self.phi_n is not None
         assert self.phi_t_list is not None
         if radius == 0.0:
@@ -425,19 +462,28 @@ class LevelSet:
         is_in_range_final = False
         in_range_final = None
         i_final = -1
+
         for i, phi_t_i in enumerate(self.phi_t_list):
             phi_t = phi_t_i[nodes]
             if np.any(np.isnan(phi_t)):
                 continue
+
             r = phi_n**2 + phi_t**2
             in_range = r < radius**2
-            if np.all(in_range):
+
+            # FIX 2: Use np.any() to catch elements that span the boundary
+            if np.any(in_range):
                 if is_in_range_final:
                     print("warning: overlapping geometrical enrichment")
+
+                # FIX 1: Actually set the flag to True!
+                is_in_range_final = True
                 in_range_final = in_range
                 i_final = i
+
         if is_in_range_final:
             return (True, i_final, in_range_final)
+
         return (False, None, None)
 
 
@@ -523,6 +569,7 @@ def project_on_line(S_fn, dS_fn, ddS_fn, u_i_slice, nodes_subset):
         u_i_next = np.where(pushing_past_1 | pushing_past_0, u_i_slice, u_i_next)
 
         if np.all(np.isclose(u_i_slice, u_i_next, atol=1e-12)):
+            u_i_slice[:] = u_i_next
             break
         elif i == 999:
             bad_mask = ~np.isclose(u_i_slice, u_i_next, atol=1e-12)
@@ -532,7 +579,16 @@ def project_on_line(S_fn, dS_fn, ddS_fn, u_i_slice, nodes_subset):
         u_i_slice[:] = u_i_next
 
 
-def project_on_surface(ndbspline, uv_i_slice, nodes_subset):
+def project_on_surface(
+    ndbspline,
+    uv_i_slice,
+    nodes_subset,
+    tip_pos=None,
+    tip_b=None,
+    penalty=1e6,
+    independent=False,
+    tol=1e-12,
+):
     for i in range(1000):
         S = ndbspline(uv_i_slice)
         Su = ndbspline(uv_i_slice, nu=(1, 0))
@@ -555,6 +611,23 @@ def project_on_surface(ndbspline, uv_i_slice, nodes_subset):
         J11 = np.sum(Suu * distance, axis=1) + Su_dot_Su
         J12 = np.sum(Suv * distance, axis=1) + Su_dot_Sv  # Symmetric (J21 = J12)
         J22 = np.sum(Svv * distance, axis=1) + Sv_dot_Sv
+
+        if tip_pos is not None and tip_b is not None:
+            # 1. Calculate how far out of the plane the point has drifted
+            plane_violation = np.sum((S - tip_pos) * tip_b, axis=1)
+
+            # 2. Calculate how the surface tangents align with the front tangent
+            Su_dot_Tf = np.sum(Su * tip_b, axis=1)
+            Sv_dot_Tf = np.sum(Sv * tip_b, axis=1)
+
+            # 3. Add penalty to gradients (Forces F to zero only when in the plane)
+            F1 += penalty * plane_violation * Su_dot_Tf
+            F2 += penalty * plane_violation * Sv_dot_Tf
+
+            # 4. Add penalty to Hessian (Maintains positive-definiteness)
+            J11 += penalty * (Su_dot_Tf**2)
+            J22 += penalty * (Sv_dot_Tf**2)
+            J12 += penalty * (Su_dot_Tf * Sv_dot_Tf)
 
         det_J = (J11 * J22) - (J12 * J12)
 
@@ -586,16 +659,21 @@ def project_on_surface(ndbspline, uv_i_slice, nodes_subset):
 
         caught = u_caught | v_caught
 
-        uv_next = np.where(caught[:, None], uv_i_slice, uv_next)
+        if independent:
+            uv_next[:, 0] = np.where(u_caught, uv_i_slice[:, 0], uv_next[:, 0])
+            uv_next[:, 1] = np.where(v_caught, uv_i_slice[:, 1], uv_next[:, 1])
+        else:
+            uv_next = np.where(caught[:, None], uv_i_slice, uv_next)
 
-        if np.all(np.isclose(uv_i_slice, uv_next, atol=1e-12)):
+        if np.all(np.isclose(uv_i_slice, uv_next, atol=tol)):
+            uv_i_slice[:, :] = uv_next
             break
         elif i == 999:
-            bad_mask = ~np.all(np.isclose(uv_i_slice, uv_next, atol=1e-15), axis=1)
+            bad_mask = ~np.all(np.isclose(uv_i_slice, uv_next, atol=tol), axis=1)
             print(f"Failed to converge at nodes: {np.where(bad_mask)[0]}")
             print(uv_i_slice[bad_mask])
             print("coordinates")
             print(nodes_subset[bad_mask])
             raise ValueError("3D Newton iterations didn't converge")
 
-        uv_i_slice = uv_next
+        uv_i_slice[:, :] = uv_next
