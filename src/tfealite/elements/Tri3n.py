@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Final
+from .utils import cal_B_2d_vec
 
 NODES: Final = 3
 DOFS: Final = 2
@@ -31,40 +32,40 @@ class Tri3n:
         Me = np.zeros((N_DOFS, N_DOFS)) if eval_mass else None
         x_e = self.node_coords
 
-        N, dN_dxi = self.shape_functions(xi, eta)
-        J = dN_dxi @ x_e
+        N, dN_dxi = self.shape_functions(np.array([xi, eta]))
+        J = dN_dxi[0] @ x_e
         detJ = np.linalg.det(J)
 
-        B = np.zeros((3, 6))
         dN_dxy = np.linalg.solve(J, dN_dxi)
-        B[0, ::DOFS] = dN_dxy[0, :]
-        B[1, 1::DOFS] = dN_dxy[1, :]
-        B[2, ::DOFS] = dN_dxy[1, :]
-        B[2, 1::DOFS] = dN_dxy[0, :]
-        Ke += (B.T @ self.C @ B) * detJ * weight * self.t
+        B = cal_B_2d_vec(dN_dxy)
+        w_eff = weight * detJ
+        Ke[:, :] = np.sum((B.transpose(0, 2, 1) @ self.C @ B) * w_eff, axis=0)
         if eval_mass:
             rho_t = self.rho * self.t
             N_2d = np.zeros((DOFS, N_DOFS))
             N_2d[0, ::DOFS] = N
             N_2d[1, 1::DOFS] = N
             Me += rho_t * (N_2d.T @ N_2d) * detJ * weight
-            return Me, Ke
+            return Ke, Me
         else:
-            return Ke
+            return Ke, None
 
-    def shape_functions(self, xi, eta):
-        N = np.array([1 - xi - eta, xi, eta])
+    def shape_functions(self, nat_coords):
+        xi = np.atleast_1d(nat_coords[0])
+        eta = np.atleast_1d(nat_coords[1])
+        N = np.array([1 - xi - eta, xi, eta]).T
         dN_dxi = np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]])
-        return N, dN_dxi
+        return N, dN_dxi[None, :, :]
 
     def stresses_at_nodes(self, Ue):
         Ue = np.asanyarray(Ue, dtype=float).ravel()
         # same at all points in triangle
         xi, eta = 1 / 3, 1 / 3
+        nat_coords = np.array([[xi], [eta]])
 
         x_e = self.node_coords
 
-        _, dN_dxi = self.shape_functions(xi, eta)
+        _, dN_dxi = self.shape_functions(nat_coords)
         J = dN_dxi @ x_e
 
         B = np.zeros((3, 6))

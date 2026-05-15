@@ -7,21 +7,12 @@ from ..core.quadratures import DuffyDistance
 from .Quad4n import Quad4n
 from .utils import (
     cal_B_2d_vec,
+    cal_N_2d_vec,
     enriched_shape_functions,
     cut_embedding_tri_iter,
     partial_cut_embedding_tri_iter,
     jump_shape_functions,
 )
-
-
-# in crack tip element locaal coordinaten stelsel definieren op basis van level set op tip
-# in plaats van level set te interpoleren rechtstreeks r en theta daarmee berekenen dan niet meer mogelijk dat sign change tegen gekomen wordt door enrichment
-# en perfecte orthogonaliteit van 2 level sets daar binnen element
-# kan in theorie mogelijk iets gelijkaardig doen voor geometrical enrichment elementen maar daar nog niet helemaal zeker
-# voor de intersecties in elke sub triangle de waarde van de level sets berekenen
-# 2de punt als referentie om crack tip coordinate system te definieren is die met phi_n = 0, phi_t < 0
-# indien scheur exact op punt / edge ligt en er is geen ander punt in element dat doorsneden wordt is waarschijnlijk gewoon afgeleide in dat punt --> zoals normaal bepalen
-# voor elementen met geometrical enrichment achter scheur punt die ook heaviside enrichment hebben lineair interpolleren binnen sub driehoek om sign change te vermijden
 
 
 class XQuad4n(Quad4n):
@@ -82,6 +73,7 @@ class XQuad4n(Quad4n):
         self.partial_cut = partial_cut
         self.in_range = in_range
 
+    # moet eigenlijk iets van enforce sign hebben voor de elementen die gesnapped zijn
     def cal_element_matrices(self, eval_mass=False):
         n = (
             self.N_DOFS
@@ -89,30 +81,41 @@ class XQuad4n(Quad4n):
             + int(self.t_enrich) * self.TIP_DOFS
         )
         Ke = np.zeros((n, n))
+        Me = np.zeros((n, n))
         Nc1 = None
         Nc2 = None
         if self.h_enrich or self.partial_cut:
             Nc1, Nc2 = self._cal_intersections()
         else:
             x_e = self.node_coords
-            (rule, correction) = qd.QUAD_RULES[10]
-            nat_coords = rule[:, :3].T
-            _, dN_dxi = self.shape_functions(nat_coords)
+            (rule, correction) = qd.QUAD_RULES[20]
+            nat_coords = rule[:, :2].T
+            N, dN_dxi = self.shape_functions(nat_coords)
             J = dN_dxi[:, :, : self.N_FN] @ x_e
             detJ = np.linalg.det(J)
+            if np.any(np.isnan(detJ)):
+                print("nan occured at first one")
+                print("nodes", self.node_coords)
+                print("phi_n", self.phi_n)
+                print("phi_t", self.phi_t)
             dN_dxy = np.linalg.solve(J, dN_dxi)
             B = cal_B_2d_vec(dN_dxy)
             w_eff = rule[:, 2] * correction * detJ
             Ke[:, :] = np.sum(
                 (B.transpose(0, 2, 1) @ self.C @ B) * w_eff[:, None, None], axis=0
             )
+            if eval_mass:
+                N_2d = cal_N_2d_vec(N)
+                Me[:, :] = np.sum(
+                    (N_2d.transpose(0, 2, 1) @ N_2d) * w_eff[:, None, None],
+                    axis=0,
+                )
         if self.partial_cut:
-            Ke[: self.N_DOFS, : self.N_DOFS] = super().cal_element_matrices(
-                eval_mass=False
-            )
+            Ke_temp, _ = super().cal_element_matrices(eval_mass=False)
+            Ke[: self.N_DOFS, : self.N_DOFS] = Ke_temp
             assert Nc1 is not None and Nc2 is not None
             assert not self.h_enrich
-            (rule, correction) = qd.QUAD_RULES[10]
+            (rule, correction) = qd.QUAD_RULES[20]
             rule = rule.copy()
             rule[:, 0:2] = (1 + rule[:, 0:2]) / 2
             rule[:, 2] /= 4
@@ -127,30 +130,34 @@ class XQuad4n(Quad4n):
 
             self._integrate_partial_cut(
                 Ke,
+                Me,
                 tip1,
                 Nc1,
                 range(4),
                 self.NAT_1,
                 rule,
                 correction,
+                eval_mass,
             )
             self._integrate_partial_cut(
                 Ke,
+                Me,
                 tip2,
                 Nc2,
                 range(2, 6),
                 self.NAT_2,
                 rule,
                 correction,
+                eval_mass,
             )
         elif self.h_enrich:
             assert Nc1 is not None and Nc2 is not None
-            self._integrate_sub_tri(Ke, Nc1, self.NAT_1)
-            self._integrate_sub_tri(Ke, Nc2, self.NAT_2)
+            self._integrate_sub_tri(Ke, Me, Nc1, self.NAT_1, eval_mass)
+            self._integrate_sub_tri(Ke, Me, Nc2, self.NAT_2, eval_mass)
 
         if eval_mass:
-            raise NotImplementedError
-        return Ke
+            return Ke, Me
+        return Ke, None
 
     def _cal_intersections(self):
         num = np.empty_like(self.phi_n)
@@ -306,9 +313,9 @@ class XQuad4n(Quad4n):
 
         return p4
 
-    def _integrate_sub_tri(self, Ke, Nc, nat_x_e):
+    def _integrate_sub_tri(self, Ke, Me, Nc, nat_x_e, eval_mass):
         if self.t_enrich:
-            rule, correction = qd.TRI_RULES[10]
+            rule, correction = qd.TRI_RULES[13]
         else:
             rule, correction = qd.TRI_RULES[5]
         x_e = self.node_coords
@@ -317,6 +324,7 @@ class XQuad4n(Quad4n):
 
         while True:
             Ke_temp = np.zeros_like(Ke)
+            Me_temp = np.zeros_like(Me)
             is_valid = True
 
             for Ni, detJi in cut_embedding_tri_iter(Nc):
@@ -328,11 +336,11 @@ class XQuad4n(Quad4n):
                 sub_phi_n = N @ self.phi_n
                 on_crack = np.isclose(sub_phi_n, 0.0, atol=1e-10)
                 is_on_crack = np.sum(on_crack) == 2
-                if is_on_crack:
-                    p1_idx = np.where(~on_crack)[0][0]
-                    sign = np.sign(sub_phi_n[p1_idx])
-                else:
-                    sign = None
+                # if is_on_crack:
+                p1_idx = np.where(~on_crack)[0][0]
+                sign = np.sign(sub_phi_n[p1_idx])
+                # else:
+                #     sign = None
 
                 if is_on_crack and not force_linear:
                     on_crack_indices = np.where(on_crack)[0]
@@ -373,6 +381,11 @@ class XQuad4n(Quad4n):
 
                     Ji = dn_dxi @ nat_sub_x_e_4n.T
                     detJi_eval = np.linalg.det(Ji)
+                    if np.any(np.isnan(detJi)):
+                        print("nan occured at second one")
+                        print("nodes", self.node_coords)
+                        print("phi_n", self.phi_n)
+                        print("phi_t", self.phi_t)
 
                     if np.any(detJi_eval <= 0):
                         is_valid = False
@@ -386,9 +399,14 @@ class XQuad4n(Quad4n):
                     detJi *= 4
                     nat_coords_sub = nat_sub_x_e @ n
 
-                _, dN_dxi_sub = self.shape_functions(nat_coords_sub, enforce_sign=sign)
+                N, dN_dxi_sub = self.shape_functions(nat_coords_sub, enforce_sign=sign)
                 J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
                 detJ = np.linalg.det(J)
+                if np.any(np.isnan(detJi)):
+                    print("nan occured at third one")
+                    print("nodes", self.node_coords)
+                    print("phi_n", self.phi_n)
+                    print("phi_t", self.phi_t)
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
                 B = cal_B_2d_vec(dN_dxy_sub)
                 w_eff = w * correction * detJ * detJi
@@ -396,16 +414,28 @@ class XQuad4n(Quad4n):
                 Ke_temp += np.sum(
                     B.transpose(0, 2, 1) @ self.C @ B * w_eff[:, None, None], axis=0
                 )
+                if eval_mass:
+                    N_2d = cal_N_2d_vec(N)
+                    Me_temp[:, :] += np.sum(
+                        (N_2d.transpose(0, 2, 1) @ N_2d) * w_eff[:, None, None],
+                        axis=0,
+                    )
 
             if is_valid:
                 # All sub-triangles mapped successfully without folding.
                 Ke += Ke_temp
+                if eval_mass:
+                    Me += Me_temp
                 break
             else:
                 # A sub-triangle folded over.
+                print("warning had to fall back to linear triangles (full cut)")
+                print(self.phi_n)
                 force_linear = True
 
-    def _integrate_partial_cut(self, Ke, tip, Nc, range, nat_x_e, rule, correction):
+    def _integrate_partial_cut(
+        self, Ke, Me, tip, Nc, range, nat_x_e, rule, correction, eval_mass
+    ):
         x_e = self.node_coords
         Ni_template = np.zeros((3, 3))
         Ni_template[:, 0] = tip
@@ -414,11 +444,11 @@ class XQuad4n(Quad4n):
             xi_d, eta_d, on_crack, behind_tip, nat_sub_x_e, detJi, force_linear
         ):
             is_on_crack = np.sum(on_crack & behind_tip) == 2
-            if is_on_crack:
-                p1_idx = np.where(~on_crack)[0][0]
-                sign = np.sign(sub_phi_n[p1_idx])
-            else:
-                sign = None
+            # if is_on_crack:
+            p1_idx = np.where(~on_crack)[0][0]
+            sign = np.sign(sub_phi_n[p1_idx])
+            # else:
+            #     sign = None
 
             if not force_linear and is_on_crack:
                 c1, c2 = np.where(on_crack)[0]
@@ -451,6 +481,11 @@ class XQuad4n(Quad4n):
 
                 Ji = dn_dxi @ nat_sub_x_e_ext.T
                 detJi = np.linalg.det(Ji)
+                if np.any(np.isnan(detJi)):
+                    print("nan occured at fourth one")
+                    print("nodes", self.node_coords)
+                    print("phi_n", self.phi_n)
+                    print("phi_t", self.phi_t)
                 nat_coords_sub = nat_sub_x_e_ext @ N
                 return nat_coords_sub, detJi, sign
             else:
@@ -461,6 +496,7 @@ class XQuad4n(Quad4n):
         force_linear = False
         while True:
             Ke_temp = np.zeros_like(Ke)
+            Me_temp = np.zeros_like(Me)
             is_valid = True
 
             for Ni, detJi in partial_cut_embedding_tri_iter(Nc, tip, range):
@@ -496,9 +532,18 @@ class XQuad4n(Quad4n):
                     force_linear,
                 )
 
-                _, dN_dxi_sub = self.shape_functions(nat_coords_sub, enforce_sign=sign)
+                if np.any(detJi_mod < 0):
+                    is_valid = False
+                    break
+
+                N, dN_dxi_sub = self.shape_functions(nat_coords_sub, enforce_sign=sign)
                 J = dN_dxi_sub[:, :, 0 : self.N_FN] @ x_e
                 detJ = np.linalg.det(J)
+                if np.any(np.isnan(detJ)):
+                    print("nan occured at fifth one")
+                    print("nodes", self.node_coords)
+                    print("phi_n", self.phi_n)
+                    print("phi_t", self.phi_t)
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
 
                 w_eff_all = rule_w_all * correction * w_d_all * detJi_mod * detJ
@@ -526,15 +571,28 @@ class XQuad4n(Quad4n):
                 Ke_temp[0:begin_tip, begin_tip:] += res
                 Ke_temp[begin_tip:, 0:begin_tip] += res.T
 
+                if eval_mass:
+                    N_2d = cal_N_2d_vec(N[:N_gp])
+                    Me_temp[:, :] += np.sum(
+                        (N_2d.transpose(0, 2, 1) @ N_2d) * w_eff_all[:N_gp, None, None],
+                        axis=0,
+                    )
+
             if is_valid:
                 # All sub-triangles mapped successfully without folding.
                 Ke += Ke_temp
+                if eval_mass:
+                    Me += Me_temp
                 break
             else:
                 # A sub-triangle folded over.
+                print("warning had to fall back to linear triangles (partial cut)")
+                print("phi_n", self.phi_n)
                 force_linear = True
 
-    def _cubic_shape_functions(self, xi, eta):
+    def _cubic_shape_functions(self, nat_coords):
+        xi = np.atleast_1d(nat_coords[0])
+        eta = np.atleast_1d(nat_coords[1])
         Q0_xi = (xi - 1) ** 2 * (xi + 2) / 4
         Q1_xi = (2 - xi) * (xi + 1) ** 2 / 4
         Q0_eta = (eta - 1) ** 2 * (eta + 2) / 4
@@ -582,6 +640,7 @@ class XQuad4n(Quad4n):
     def nearest_point_on_crack(self, coords):
         coords_2d = np.atleast_2d(coords)
         N_pts = coords_2d.shape[0]
+        print(coords_2d)
 
         try:
             nat_coords = self._cal_nat_coords(coords_2d)
@@ -633,13 +692,11 @@ class XQuad4n(Quad4n):
             )
             Residual = np.stack([-phi_n_val[active], -orth_val[active]], axis=1)
             try:
-                step = np.linalg.solve(J_NR, Residual)
+                step = np.linalg.solve(J_NR, Residual[..., np.newaxis]).squeeze(-1)
             except np.linalg.LinAlgError:
                 break
             nat_coords[0, active] += step[:, 0]
             nat_coords[1, active] += step[:, 1]
-        # If the hyperbola extends outside the element, the nearest valid point
-        # must lie on the intersection with the Quad4n boundary edges.
         inside = (np.abs(nat_coords[0, :]) <= 1.0 + 1e-6) & (
             np.abs(nat_coords[1, :]) <= 1.0 + 1e-6
         )
@@ -653,7 +710,6 @@ class XQuad4n(Quad4n):
                 if self.phi_n[i] * self.phi_n[j] <= 0:
                     denom = self.phi_n[i] - self.phi_n[j]
                     if np.isclose(denom, 0.0):
-                        # Edge lies perfectly on the crack
                         all_intersections.extend(
                             [self.node_coords[i], self.node_coords[j]]
                         )
@@ -687,6 +743,7 @@ class XQuad4n(Quad4n):
             self,
             self._base_shape_functions,
             self._base_shape_functions,
+            # self._cubic_shape_functions,
             nat_coords,
             tip_coords,
         )
@@ -704,6 +761,7 @@ class XQuad4n(Quad4n):
             self,
             self._base_shape_functions,
             self._base_shape_functions,
+            # self._cubic_shape_functions,
             nat_coords,
             phi_n,
             phi_t,

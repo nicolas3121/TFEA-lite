@@ -9,6 +9,7 @@ from .utils import (
     enriched_shape_functions,
     partial_cut_embedding_tetr_iter,
     ELEM_EDGES,
+    jump_shape_functions,
 )
 
 
@@ -77,11 +78,11 @@ class XTetr4n(Tetr4n):
         self.in_range = in_range
 
     def _base_shape_functions(self, natural_coordinate):
-        natural_coordinate = np.atleast_2d(natural_coordinate)
+        # natural_coordinate = np.atleast_2d(natural_coordinate)
         # print(natural_coordinate)
-        xi = natural_coordinate[0, :]
-        eta = natural_coordinate[1, :]
-        zeta = natural_coordinate[2, :]
+        xi = np.atleast_1d(natural_coordinate[0])
+        eta = np.atleast_1d(natural_coordinate[1])
+        zeta = np.atleast_1d(natural_coordinate[2])
         N = np.array([1 - xi - eta - zeta, xi, eta, zeta]).T
         dN_dxi = np.array(
             [
@@ -94,12 +95,13 @@ class XTetr4n(Tetr4n):
         return N, dN_dxi[None, :, :]
 
     def _cal_intersections(self):
+        tol = 1e-10
         phi_num = self.phi_n[self.num_edges]
         phi_denom = self.phi_n[self.denom_edges]
         num = phi_num
         denom = phi_num - phi_denom
-        unsolvable = np.isclose(denom, 0)
-        on_crack = np.isclose(phi_denom, 0)
+        unsolvable = np.isclose(denom, 0, atol=tol)
+        on_crack = np.isclose(phi_denom, 0, atol=tol)
         N1 = np.clip(
             np.divide(
                 num,
@@ -119,7 +121,7 @@ class XTetr4n(Tetr4n):
             ]
         )
         phi_n12 = N1 * phi_denom + (1 - N1) * phi_num
-        on_interface = np.isclose(phi_n12, 0.0, atol=1e-12)
+        on_interface = np.isclose(phi_n12, 0.0, atol=tol)
         if not np.any(on_interface):
             kappa = None
         else:
@@ -128,6 +130,7 @@ class XTetr4n(Tetr4n):
 
     def _cal_front_intersections(self):
         # print("nodes", self.node_coords)
+        tol = 1e-10
         tip = np.empty((4, 4))
         tip_on_interface = [True, True, True, True]
         B = np.array([0, 0, 1])
@@ -149,8 +152,8 @@ class XTetr4n(Tetr4n):
                 num[:-1] = phi_n_face[1:]
                 num[-1] = phi_n_face[0]
                 denom = num - phi_n_face
-                unsolvable = np.isclose(denom, 0.0)
-                on_crack = np.isclose(phi_n_face, 0.0)
+                unsolvable = np.isclose(denom, 0.0, atol=tol)
+                on_crack = np.isclose(phi_n_face, 0.0, atol=tol)
                 N1 = np.clip(
                     np.divide(
                         num,
@@ -169,8 +172,7 @@ class XTetr4n(Tetr4n):
                     ]
                 )
                 phi_n12 = N1 * phi_n_face + (1 - N1) * num
-                on_interface = np.isclose(phi_n12, 0.0, atol=1e-12)
-                # print("on_interface", on_interface)
+                on_interface = np.isclose(phi_n12, 0.0, atol=tol)
                 if not np.any(on_interface):
                     cj = np.full(3, 1 / 3)
                     tip_on_interface[j] = False
@@ -178,6 +180,13 @@ class XTetr4n(Tetr4n):
                     cj = np.sum(on_interface[None, :] * Nc, axis=1) / np.sum(
                         on_interface
                     )
+                    phi_t_cj = np.dot(cj, phi_t_face)
+
+                    # If phi_t is also 0 here, this is a real front point!
+                    if np.isclose(phi_t_cj, 0.0, atol=tol):
+                        tip_on_interface[j] = True
+                    else:
+                        tip_on_interface[j] = False
             tip[[i, r, g], j] = cj
         return tip, tip_on_interface
 
@@ -188,6 +197,7 @@ class XTetr4n(Tetr4n):
             + int(self.t_enrich) * self.TIP_DOFS
         )
         Ke = np.zeros((n, n))
+        np.zeros_like(Ke)
         x_e = self.node_coords
 
         (rule, correction) = qd.TETR_RULES[1]
@@ -195,7 +205,11 @@ class XTetr4n(Tetr4n):
 
         _, dN_dxi = self._base_shape_functions(rule[:, :-1].T)
         J = dN_dxi[0, :, :] @ x_e
-        J_inv = np.linalg.inv(J)
+        try:
+            J_inv = np.linalg.inv(J)
+        except np.linalg.LinAlgError:
+            print(x_e)
+            raise ValueError
         detJ = np.linalg.det(J)
         Nc = None
         if self.partial_cut:
@@ -238,7 +252,7 @@ class XTetr4n(Tetr4n):
         if eval_mass:
             raise NotImplementedError
         else:
-            return Ke
+            return Ke, None
 
     def _integrate_partial_cut(self, Ke, D, J_inv, detJ, B):
         x_e = self.node_coords
@@ -303,3 +317,182 @@ class XTetr4n(Tetr4n):
         eps = B @ Ue
         sig = D @ eps[:, :, None]
         return sig
+
+    # niet helemaal ok want ligt niet gegarandeerd in vlak loodrecht op crack front
+    # moet eigenlijk crack front vectoren gebruiken om te constrainen tot vlak
+    # def nearest_point_on_crack(self, coords):
+    #     coords_2d = np.atleast_2d(coords)
+    #     print("hello")
+    #     print("coords", coords_2d)
+    #     N_pts = coords_2d.shape[0]
+    #
+    #     Nc, kappa = self._cal_intersections()
+    #     phi_n = self.phi_n @ Nc
+    #
+    #     on_crack = np.isclose(phi_n, 0.0, atol=1e-12)
+    #     crack_indices = np.where(on_crack)[0]
+    #
+    #     if len(crack_indices) == 0:
+    #         return None, None
+    #
+    #     # Extract both physical and natural coordinates of the intersection points
+    #     crack_pts = (self.node_coords.T @ Nc)[:, crack_indices].T
+    #     crack_nat = (self.NAT_COORDS.T @ Nc[:, crack_indices]).T
+    #
+    #     # --- 0D Case: Touching Node ---
+    #     if len(crack_indices) == 1 or np.all(
+    #         np.isclose(crack_pts[1:], crack_pts[0], atol=1e-12)
+    #     ):
+    #         return (
+    #             np.tile(crack_pts[0], (N_pts, 1)),
+    #             np.tile(crack_nat[0], (N_pts, 1)),
+    #         )
+    #
+    #     center_phys = np.mean(crack_pts, axis=0)
+    #
+    #     centered_phys = crack_pts - center_phys
+    #
+    #     U, S, Vt = np.linalg.svd(centered_phys)
+    #
+    #     tol = 1e-10
+    #     valid_dims = S > tol
+    #     basis_vectors = Vt[valid_dims]
+    #
+    #     W = coords_2d - center_phys
+    #     W_proj = (W @ basis_vectors.T) @ basis_vectors
+    #     closest_pts = center_phys + W_proj
+    #
+    #     J = self.jacobian_matrix()
+    #     X0 = self.node_coords[0]
+    #     print("closest_pts", closest_pts)
+    #     dx = closest_pts - X0[None, :]
+    #     nat_coords = np.linalg.solve(J, dx.T)
+    #     print("nat_coords", nat_coords)
+    #
+    #     return closest_pts, nat_coords
+
+    def nearest_point_on_crack(self, coords, tip_pos, tip_b):
+        Nc, kappa = self._cal_intersections()
+        phi_n_at_intersections = self.phi_n @ Nc
+        on_crack = np.isclose(phi_n_at_intersections, 0.0, atol=1e-12)
+
+        if not np.any(on_crack):
+            return None, None
+
+        crack_pts = (self.node_coords.T @ Nc)[:, on_crack].T
+        X_anchor = np.mean(crack_pts, axis=0)
+
+        _, dN_dxi_full = self._base_shape_functions(np.array([1, 0, 0]))
+        dN_dxi = dN_dxi_full[0, :, : self.N_FN]
+        J = dN_dxi @ self.node_coords
+        J_inv = np.linalg.inv(J)
+
+        grad_phi_n = J_inv @ dN_dxi @ self.phi_n
+        n_c = grad_phi_n / np.linalg.norm(grad_phi_n)
+
+        n_s = tip_b / np.linalg.norm(tip_b, axis=1)[:, None]
+
+        # 4. Vectorized intersection of two planes (Crack Plane & Slice Plane)
+        dot = np.sum(n_c[None, :] * n_s, axis=1)  # (N,)
+        det = 1.0 - dot**2
+
+        # Residuals relative to our anchor points
+        # r_c: distance from query to the crack plane
+        r_c = np.sum((X_anchor - coords) * n_c[None, :], axis=1)
+        # r_s: distance from query to the slice plane
+        r_s = np.sum((tip_pos - coords) * n_s, axis=1)
+
+        alpha = (r_c - dot * r_s) / det
+        beta = (r_s - dot * r_c) / det
+
+        P_on_line = coords + alpha[:, None] * n_c[None, :] + beta[:, None] * n_s
+
+        # 5. Final Mapping to Natural Coordinates
+        # If J = dN_dxi @ self.node_coords, then xi = dx @ J_inv
+        dx = P_on_line - self.node_coords[0]
+        nat_coords = dx @ J_inv
+
+        v = np.cross(n_c[None, :], n_s, axis=1)
+        v /= np.linalg.norm(v, axis=1)[:, None]
+
+        v_nat = v @ J_inv
+
+        xi, eta, zeta = nat_coords[:, 0], nat_coords[:, 1], nat_coords[:, 2]
+        dxi, deta, dzeta = v_nat[:, 0], v_nat[:, 1], v_nat[:, 2]
+
+        A_mat = np.array([-dxi, -deta, -dzeta, dxi + deta + dzeta])
+
+        B_mat = np.array([xi, eta, zeta, 1.0 - (xi + eta + zeta)])
+        # first 3 >= 0, last one <= 1
+        # one of them being one implies another being 0 so can use same equations for both
+
+        eps = 1e-14
+
+        # t_max: Upper bounds (where A > 0) -> gives most restrictive max
+        t_max_candidates = np.where(A_mat > eps, B_mat / A_mat, np.inf)
+        t_max = np.min(t_max_candidates, axis=0)
+
+        # t_min: Lower bounds (where A < 0) -> gives most restrictive min
+        t_min_candidates = np.where(A_mat < -eps, B_mat / A_mat, -np.inf)
+        t_min = np.max(t_min_candidates, axis=0)
+
+        # Validity Check: Does the line intersect the element at all?
+        is_valid = t_min <= (t_max + 1e-10)
+
+        # The unconstrained projection is exactly at lambda = 0.
+        # We clamp 0 into the valid intersection segment [t_min, t_max].
+        lambda_clamped = np.clip(0.0, t_min, t_max)
+
+        # Apply the clamping translation
+        P_clamped = P_on_line + lambda_clamped[:, None] * v
+        nat_coords_clamped = nat_coords + lambda_clamped[:, None] * v_nat
+
+        nat_coords_clamped = np.clip(nat_coords_clamped, 0.0, 1.0)
+
+        return P_clamped, nat_coords_clamped, is_valid
+
+    def jump_shape_functions(self, nat_coords, tip_coords):
+        return jump_shape_functions(
+            self,
+            self._base_shape_functions,
+            self._base_shape_functions,
+            nat_coords,
+            tip_coords,
+        )
+
+    # def project_on_crack_front(self, coords):
+    #     tip, tip_on_interface = self._cal_front_intersections()
+    #     tip = tip[:, tip_on_interface]
+    #     phi_t = self.phi_t @ tip
+    #     tip_on_front = np.isclose(phi_t, 0.0, atol=1e-12)
+    #     front = tip[:, tip_on_front]
+    #
+    #     x_e_i = (self.node_coords.T @ front).T
+    #     coords = np.atleast_2d(coords)
+    #
+    #     if x_e_i.shape[0] == 1:
+    #         return np.tile(x_e_i[0], (coords.shape[0], 1))
+    #
+    #     elif x_e_i.shape[0] == 0:
+    #         return coords
+    #
+    #     A = x_e_i[0]
+    #     B = x_e_i[1]
+    #
+    #     AB = B - A
+    #     AP = coords - A
+    #
+    #     t = np.dot(AP, AB) / (np.dot(AB, AB) + 1e-16)
+    #
+    #     projected_coords = A + t[:, None] * AB
+    #
+    #     if tip.shape[0] == 3:  # crack full cuts a face
+    #         C = tip[~tip_on_front]
+    #         tip_t = A - C
+    #
+    #     elif tip.shape[0] == 2:  # cuts through an edge
+    #         pass
+    #     else:
+    #         pass
+    #
+    #     return projected_coords

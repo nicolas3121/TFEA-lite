@@ -1,4 +1,8 @@
 import numpy as np
+from ..core import quadratures as qd
+from .utils import (
+    cal_B_3d_vec,
+)
 
 
 class Tetr4n:
@@ -6,14 +10,31 @@ class Tetr4n:
         self.node_coords = np.asarray(node_coords, dtype=float).reshape(4, 3)
         self.material = material
 
+    # def shape_functions(self, natural_coordinate):
+    #     xi, eta, zeta = natural_coordinate
+    #     N = np.zeros(4)
+    #     N[0] = 1.0 - xi - eta - zeta
+    #     N[1] = xi
+    #     N[2] = eta
+    #     N[3] = zeta
+    #     return N
+
     def shape_functions(self, natural_coordinate):
-        xi, eta, zeta = natural_coordinate
-        N = np.zeros(4)
-        N[0] = 1.0 - xi - eta - zeta
-        N[1] = xi
-        N[2] = eta
-        N[3] = zeta
-        return N
+        # natural_coordinate = np.atleast_2d(natural_coordinate)
+        # print(natural_coordinate)
+        xi = np.atleast_1d(natural_coordinate[0])
+        eta = np.atleast_1d(natural_coordinate[1])
+        zeta = np.atleast_1d(natural_coordinate[2])
+        N = np.array([1 - xi - eta - zeta, xi, eta, zeta]).T
+        dN_dxi = np.array(
+            [
+                [-1.0, -1.0, -1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        ).T
+        return N, dN_dxi[None, :, :]
 
     def shape_function_derivatives(self, natural_coordinate):
         dN_dnat = np.array(
@@ -79,14 +100,27 @@ class Tetr4n:
         return D
 
     def cal_element_matrices(self, eval_mass=False):
-        V = self.element_volume()
-        B = self.strain_displacement_matrix()
+        x_e = self.node_coords
+        (rule, correction) = qd.TETR_RULES[1]
+        nat_coords = rule[:, :3]
+        _, dN_dxi = self.shape_functions(nat_coords.T)
+        J = dN_dxi[0, :, :] @ x_e
+        detJ = np.linalg.det(J)
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+        # B = cal_B_3d_vec(dN_dxy)
+        # V = self.element_volume()
+        # B = self.strain_displacement_matrix()
         D = self.cal_D(self.material["E"], self.material["nu"])
-        Ke = B.T @ D @ B * V
+        B = cal_B_3d_vec(dN_dxy)
+        w_eff = rule[:, 3] * correction * detJ
+        Ke = np.sum((B.transpose(0, 2, 1) @ D @ B) * w_eff[:, None, None], axis=0)
+        # Ke = B.T @ D @ B * V
         if not eval_mass:
-            return Ke
+            return Ke, None
         rho = self.material["rho"]
-        M_scalar = (rho * V / 20.0) * (2.0 * np.eye(4) + (np.ones((4, 4)) - np.eye(4)))
+        M_scalar = (rho * detJ / 20.0) * (
+            2.0 * np.eye(4) + (np.ones((4, 4)) - np.eye(4))
+        )
         Me = np.kron(M_scalar, np.eye(3))
         return Me, Ke
 
@@ -121,3 +155,16 @@ class Tetr4n:
         strain = B @ Ue
         stress = D @ strain
         return stress
+
+    def cal_stresses(self, nat_coords, Ue):
+        Ue = np.asanyarray(Ue, dtype=float).ravel()
+        x_e = self.node_coords
+        _, dN_dxi = self.shape_functions(nat_coords)
+        J = dN_dxi[0, :, :] @ x_e
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+
+        B = cal_B_3d_vec(dN_dxy)
+        D = self.cal_D()
+        eps = B @ Ue
+        sig = D @ eps[:, :, None]
+        return sig

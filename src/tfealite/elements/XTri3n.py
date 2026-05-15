@@ -111,7 +111,7 @@ class XTri3n(Tri3n):
         if self.h_enrich or self.partial_cut:
             Nc = self._cal_intersections()
         else:
-            (rule, correction) = qd.TRI_RULES[10]
+            (rule, correction) = qd.TRI_RULES[19]
             nat_coords = rule[:, :2].T
             _, dN_dxi = self.shape_functions(nat_coords)
             dN_dxy = np.linalg.solve(J, dN_dxi)
@@ -132,13 +132,12 @@ class XTri3n(Tri3n):
         elif self.h_enrich:
             assert Nc is not None
             if self.t_enrich:
-                rule, correction = qd.TRI_RULES[10]
+                rule, correction = qd.TRI_RULES[19]
             else:
-                rule, correction = qd.TRI_RULES[1]
+                rule, correction = qd.TRI_RULES[5]
             for Ni, detJi in cut_embedding_tri_iter(Nc):
                 nat_coords = rule[:, :2].T
                 n, _ = self._base_shape_functions(nat_coords)
-                print(J.T)
                 sub_nat_coords = self.NAT_COORDS.T @ Ni @ n.T
                 _, dN_dxi_sub = self.shape_functions(sub_nat_coords)
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
@@ -151,7 +150,7 @@ class XTri3n(Tri3n):
         if eval_mass:
             raise NotImplementedError
         else:
-            return Ke
+            return Ke, None
 
     def _integrate_partial_cut(self, Ke, Nc, J, detJ, B):
         x_e = self.node_coords
@@ -179,7 +178,7 @@ class XTri3n(Tri3n):
             w_d_all = np.concatenate([w_d_1, w_d_2])
             rule_w_all = np.tile(rule[:, 2], 2)  # Repeat the Gauss weights
 
-            n = np.array([1 - xi_d_all - eta_d_all, xi_d_all, eta_d_all])
+            n = np.array([1 - xi_d_all - eta_d_all, xi_d_all, eta_d_all]).T
             sub_nat_coords = self.NAT_COORDS.T @ Ni @ n.T
             _, dN_dxi_sub = self.shape_functions(sub_nat_coords)
             dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
@@ -207,10 +206,8 @@ class XTri3n(Tri3n):
         xi = np.atleast_1d(nat_coords[0])
         eta = np.atleast_1d(nat_coords[1])
         N = np.array([1 - xi - eta, xi, eta]).T
-        dN_dxi = np.tile(
-            np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]]), (xi.shape[0], 1, 1)
-        )
-        return N, dN_dxi
+        dN_dxi = np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]])
+        return N, dN_dxi[None, :, :]
 
     def _quadratic_shape_functions(self, nat_coords):
         N, dN_dxi = self._base_shape_functions(nat_coords)
@@ -243,16 +240,9 @@ class XTri3n(Tri3n):
 
         if np.all(np.isclose(crack_pts[1:], crack_pts[0], 1e-12)):  # touching node
             crack_indices = np.where(on_crack)[0]
-            return crack_pts[0], self.NAT_COORDS @ Nc[:, crack_indices[0]]
-        if np.all(np.isclose(crack_pts[1:], crack_pts[0], atol=1e-12)):
-            crack_indices = np.where(on_crack)[0]
-            single_X_proj = crack_pts[0]
-            single_nat_coord = self.NAT_COORDS @ Nc[:, crack_indices[0]]
-            X_proj = np.tile(single_X_proj, (N_pts, 1))
-            nat_coords = np.tile(single_nat_coord, (N_pts, 1)).T
-            if np.asarray(coords).ndim == 1:
-                return X_proj[0], nat_coords[:, 0]
-            return X_proj, nat_coords
+            return np.tile(crack_pts[0], (N_pts, 1)), np.tile(
+                self.NAT_COORDS @ Nc[:, crack_indices[0]], (N_pts, 1)
+            )
 
         P_A = crack_pts[0]
         P_B = crack_pts[1]

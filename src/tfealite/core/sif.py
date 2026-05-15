@@ -198,16 +198,28 @@ class DisplacementCorrelationMethodSIF:
         coef = (self.shear_mod / (self.kosolov + 1.0)) * np.sqrt(2.0 * np.pi / r_clean)
         K_I_star = coef * jump_local[:, 1]
         K_II_star = coef * jump_local[:, 0]
+        #
+        # r_a, r_b = r_clean[:-1], r_clean[1:]
+        #
+        # extrap_multiplier = r_b / (r_b - r_a)
+        # r_ratio = r_a / r_b
+        #
+        # K_I_ext = extrap_multiplier * (K_I_star[:-1] - r_ratio * K_I_star[1:])
+        # K_II_ext = extrap_multiplier * (K_II_star[:-1] - r_ratio * K_II_star[1:])
+        #
+        # return float(np.mean(K_I_ext)), float(np.mean(K_II_ext))
+        # Safety check: OLS requires at least 2 points to define a line
+        if len(r_clean) < 2:
+            print("Warning: < 2 valid radial extraction points. Extrapolation failed.")
+            return float("nan"), float("nan")
 
-        r_a, r_b = r_clean[:-1], r_clean[1:]
+        # np.polyfit(x, y, degree) returns coefficients highest-power first.
+        # For degree 1 (linear), it returns [slope (c_1), intercept (c_0)].
+        # We extract index [1] to get the y-intercept at r=0.
+        K_I_final = np.polyfit(r_clean, K_I_star, 1)[1]
+        K_II_final = np.polyfit(r_clean, K_II_star, 1)[1]
 
-        extrap_multiplier = r_b / (r_b - r_a)
-        r_ratio = r_a / r_b
-
-        K_I_ext = extrap_multiplier * (K_I_star[:-1] - r_ratio * K_I_star[1:])
-        K_II_ext = extrap_multiplier * (K_II_star[:-1] - r_ratio * K_II_star[1:])
-
-        return float(np.mean(K_I_ext)), float(np.mean(K_II_ext))
+        return float(K_I_final), float(K_II_final)
 
 
 class DisplacementCorrelationMethodSIF3D:
@@ -359,13 +371,15 @@ class DisplacementCorrelationMethodSIF3D:
 
         jump = np.full_like(p1_flat, np.nan)
         r_1_star = np.full(p1_flat.shape[0], np.nan)
+        in_element_mask = np.zeros(p1_flat.shape[0], dtype=bool)
 
         for elem_id, point_idx_batch in zip(unique_cells, grouped_point_indices):
             element = model.elements[elem_id]
             cut_type = cut_info[elem_id + 1][0]
 
             elem = _build_elem_3d(model, level_set, cut_type, element)
-            _, nat_coords_batch = elem.nearest_point_on_crack(
+            print("tip", p1_tip[point_idx_batch])
+            _, nat_coords_batch, is_in_element = elem.nearest_point_on_crack(
                 p1_best_projection[point_idx_batch],
                 p1_tip[point_idx_batch],
                 p1_b[point_idx_batch],
@@ -374,13 +388,14 @@ class DisplacementCorrelationMethodSIF3D:
                 np.asarray(element[4]), model.list_dof, model.Ug
             ).reshape((-1, 3))
             jump_shape_fn_batch, r_1_batch = elem.jump_shape_functions(
-                nat_coords_batch, tip_points[point_idx_batch // len(self.r)]
+                nat_coords_batch.T, p1_tip[point_idx_batch]
             )
 
             jump[point_idx_batch, :] = jump_shape_fn_batch @ Ue
             r_1_star[point_idx_batch] = r_1_batch
+            in_element_mask[point_idx_batch] = is_in_element
 
-        valid_mask = ~np.isnan(r_1_star) & inside_mask
+        valid_mask = ~np.isnan(r_1_star) & inside_mask & in_element_mask
         valid_mask = valid_mask.reshape((p1.shape[0], p1.shape[1]))
         r_1_star = r_1_star.reshape((p1.shape[0], p1.shape[1]))
         jump = jump.reshape(p1.shape)
@@ -405,33 +420,46 @@ class DisplacementCorrelationMethodSIF3D:
         coef_III = (self.shear_mod / 4.0) * np.sqrt(2.0 * np.pi / r_sorted)
         K_III_star = coef_III * jump_local[..., 2]
 
-        r_a, r_b = r_sorted[:, :-1], r_sorted[:, 1:]
-        print("r_a", r_a)
-        K_I_a, K_I_b = K_I_star[:, :-1], K_I_star[:, 1:]
-        K_II_a, K_II_b = K_II_star[:, :-1], K_II_star[:, 1:]
-        K_III_a, K_III_b = K_III_star[:, :-1], K_III_star[:, 1:]
+        valid_counts = np.sum(~np.isnan(r_sorted), axis=1)
+        sufficient_pts = valid_counts >= 2
 
-        dr = r_b - r_a
-        dr_safe = np.where(dr < 1e-10, np.nan, dr)
-        print("dr_safe", dr_safe)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            # 2. Calculate the mean of r and K* (ignoring NaNs)
+            r_mean = np.nanmean(r_sorted, axis=1, keepdims=True)
+            K_I_mean = np.nanmean(K_I_star, axis=1, keepdims=True)
+            K_II_mean = np.nanmean(K_II_star, axis=1, keepdims=True)
+            K_III_mean = np.nanmean(K_III_star, axis=1, keepdims=True)
 
-        extrap_multiplier = r_b / dr_safe
-        r_ratio = r_a / r_b
+            # 3. Calculate deviations from the mean
+            dr = r_sorted - r_mean
+            dK_I = K_I_star - K_I_mean
+            dK_II = K_II_star - K_II_mean
+            dK_III = K_III_star - K_III_mean
 
-        K_I_ext = extrap_multiplier * (K_I_a - r_ratio * K_I_b)
-        K_II_ext = extrap_multiplier * (K_II_a - r_ratio * K_II_b)
-        K_III_ext = extrap_multiplier * (K_III_a - r_ratio * K_III_b)
+            # 4. Calculate the Sum of Squares (denominator)
+            SS_xx = np.nansum(dr**2, axis=1)
 
-        with np.errstate(invalid="ignore"):
-            K_I_final = np.nanmean(K_I_ext, axis=1)
-            K_II_final = np.nanmean(K_II_ext, axis=1)
-            K_III_final = np.nanmean(K_III_ext, axis=1)
+            # 5. Calculate the slope (c_1) for each mode
+            slope_I = np.nansum(dr * dK_I, axis=1) / SS_xx
+            slope_II = np.nansum(dr * dK_II, axis=1) / SS_xx
+            slope_III = np.nansum(dr * dK_III, axis=1) / SS_xx
 
-        failed_extrapolations = np.isnan(K_I_final)
+            # 6. Calculate the intercept (c_0), which is the final extrapolated SIF
+            # Formula: c_0 = mean(y) - c_1 * mean(x)
+            K_I_final = np.squeeze(K_I_mean) - slope_I * np.squeeze(r_mean)
+            K_II_final = np.squeeze(K_II_mean) - slope_II * np.squeeze(r_mean)
+            K_III_final = np.squeeze(K_III_mean) - slope_III * np.squeeze(r_mean)
+
+        # 7. Safety check: mask out any nodes that didn't have enough valid points
+        K_I_final = np.where(sufficient_pts, K_I_final, np.nan)
+        K_II_final = np.where(sufficient_pts, K_II_final, np.nan)
+        K_III_final = np.where(sufficient_pts, K_III_final, np.nan)
+
+        failed_extrapolations = ~sufficient_pts
         if np.any(failed_extrapolations):
             print(
                 f"Warning: {np.sum(failed_extrapolations)} DCM evaluation points failed "
-                "(likely < 2 valid radial extraction points after cleaning)."
+                "(< 2 valid radial extraction points)."
             )
 
         return K_I_final, K_II_final, K_III_final

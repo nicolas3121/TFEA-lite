@@ -24,7 +24,7 @@ def test_rigid_body_modes_fully_cut():
         False,
         False,
     )
-    Ke = tri.cal_element_matrices(eval_mass=False)
+    Ke, _ = tri.cal_element_matrices(eval_mass=False)
     eigenvalues = np.abs(np.linalg.eigvals(Ke))
 
     # Sort eigenvalues to find the smallest ones

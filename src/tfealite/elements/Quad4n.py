@@ -1,5 +1,5 @@
 import numpy as np
-from .utils import cal_B_2d_vec
+from .utils import cal_B_2d_vec, cal_N_2d_vec
 from ..core.quadratures import QUAD_RULES, BAR_RULES
 
 
@@ -33,15 +33,10 @@ class Quad4n:
         w_eff = rule[:, 2] * correction * detJ
         Ke = np.sum((B.transpose(0, 2, 1) @ self.C @ B) * w_eff[:, None, None], axis=0)
         if eval_mass:
-            rho_t = self.rho
-            N_2d = np.zeros((nat_coords.shape[0], 2, 8))
-            N_2d[:, 0, ::2] = N[:, :]
-            N_2d[:, 1, 1::2] = N[:, :]
-            Me = np.sum(
-                rho_t * (N_2d.transpose(0, 2, 1) @ N_2d) * w_eff[:, None, None], axis=0
-            )
-            return Me, Ke
-        return Ke
+            N_2d = cal_N_2d_vec(N)
+            Me = np.sum((N_2d.transpose(0, 2, 1) @ N_2d) * w_eff[:, None, None], axis=0)
+            return Ke, Me
+        return Ke, None
 
     @staticmethod
     def cal_traction_loads(

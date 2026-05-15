@@ -339,6 +339,8 @@ def test_pure_mode_1_3d():
     print("K_I", K_I)
     print("K_II", K_II)
     print("K_III", K_III)
+    print("ratio K_II", np.abs(K_II / K_I))
+    print("ratio K_III", np.abs(K_III / K_I))
 
     mult = 1e3
     # model.Ug = np.zeros(len(model.list_dof))

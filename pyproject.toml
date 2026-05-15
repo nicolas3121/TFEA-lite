@@ -17,6 +17,7 @@ dependencies = [
     "numpy",
     "scipy",
     "pyvista",
+	"numba",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,10 @@ dev = [
 	"pytest>=9.0",
 	"sympy>=1.14.0",
 	"pre-commit>=4.5.1",
+]
+meshing = [
+	"meshio>=5.3.5",
+	"gmsh>=4.15.2",
 ]
 
 [tool.setuptools.packages.find]

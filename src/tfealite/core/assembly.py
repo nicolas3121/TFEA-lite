@@ -1,4 +1,5 @@
 import numpy as np
+from numba import jit
 
 import scipy as sp
 from .dofs import (
@@ -58,23 +59,29 @@ def preallocate_csr_profile(elements, dof_list):
     final_rows = unique_pairs[:, 0]
     final_cols = unique_pairs[:, 1]
 
-    # The 'indices' array is simply the sorted columns
     indices = final_cols.astype(np.int32)
 
-    # To get 'indptr', we count how many non-zeros exist in each row
     counts = np.bincount(final_rows, minlength=total_dofs)
 
-    # indptr is just the cumulative sum of the counts, starting with 0
     indptr = np.zeros(total_dofs + 1, dtype=np.int32)
     indptr[1:] = np.cumsum(counts)
 
-    # 4. Allocate the empty 'data' array for assembly
-    # We now know exactly how many non-zero elements are in the global matrix
     nnz = len(indices)
     data = np.zeros(nnz, dtype=np.float64)
 
-    # Return a fully functional, preallocated CSR matrix full of zeros
     return sp.sparse.csr_matrix((data, indices, indptr), shape=(total_dofs, total_dofs))
+
+
+@jit(nopython=True)
+def fill_matrix_numba(data, indices, indptr, Ke, DOFs, selected):
+    for i, row_id in zip(selected, DOFs):
+        for j, col_id in zip(selected, DOFs):
+            row_start = indptr[row_id]
+            row_end = indptr[row_id + 1]
+            for k in range(row_start, row_end):
+                if indices[k] == col_id:
+                    data[k] += Ke[i, j]
+                    break
 
 
 def cal_KgMg(
@@ -87,12 +94,14 @@ def cal_KgMg(
     skip_elements={},
 ):
     print("=> Start evaluating stiffness matrix:")
-    Kg_row_list = []
-    Kg_col_list = []
-    Kg_data_list = []
-    Mg_row_list = []
-    Mg_col_list = []
-    Mg_data_list = []
+    # Kg_row_list = []
+    # Kg_col_list = []
+    # Kg_data_list = []
+    # Mg_row_list = []
+    # Mg_col_list = []
+    # Mg_data_list = []
+    Kg = preallocate_csr_profile(model.elements, model.list_dof)
+    Mg = Kg.copy()
     cut_info = None
     ci = None
     if xfem:
@@ -194,38 +203,43 @@ def cal_KgMg(
             selected = np.where(np.repeat(values, counts))[0]
         else:
             selected = np.arange(Ke.shape[0])
-        Ke_selected = Ke[np.ix_(selected, selected)]
-        row_dofs, col_dofs = np.meshgrid(DOFs, DOFs, indexing="ij")
-        Kg_row_list.append(row_dofs.ravel())
-        Kg_col_list.append(col_dofs.ravel())
-        Kg_data_list.append(Ke_selected.ravel())
+        # fill_matrix(Kg, Ke, DOFs, selected)
+        fill_matrix_numba(Kg.data, Kg.indices, Kg.indptr, Ke, DOFs, selected)
         if eval_mass:
-            Me_selected = Me[np.ix_(selected, selected)]
-            Mg_row_list.append(row_dofs.ravel())
-            Mg_col_list.append(col_dofs.ravel())
-            Mg_data_list.append(Me_selected.ravel())
+            # fill_matrix(Mg, Me, DOFs, selected)
+            fill_matrix_numba(Mg.data, Mg.indices, Mg.indptr, Me, DOFs, selected)
+        # Ke_selected = Ke[np.ix_(selected, selected)]
+        # row_dofs, col_dofs = np.meshgrid(DOFs, DOFs, indexing="ij")
+        # Kg_row_list.append(row_dofs.ravel())
+        # Kg_col_list.append(col_dofs.ravel())
+        # Kg_data_list.append(Ke_selected.ravel())
+        # if eval_mass:
+        #     Me_selected = Me[np.ix_(selected, selected)]
+        #     Mg_row_list.append(row_dofs.ravel())
+        #     Mg_col_list.append(col_dofs.ravel())
+        #     Mg_data_list.append(Me_selected.ravel())
 
         if (i_e + 1) % 1000 == 0:
             print(
                 f"   - e {i_e + 1} ({ele_info[1]}) of {len(model.elements)} evaluated"
             )
     print(".. Stiffness & mass matrix completed!")
-    row_list_combined = np.concatenate(Kg_row_list)
-    col_list_combined = np.concatenate(Kg_col_list)
-    data_list_combined = np.concatenate(Kg_data_list)
-    Kg = sp.sparse.coo_matrix(
-        (data_list_combined, (row_list_combined, col_list_combined)),
-        shape=(len(model.list_dof), len(model.list_dof)),
-    ).tocsr()
+    # row_list_combined = np.concatenate(Kg_row_list)
+    # col_list_combined = np.concatenate(Kg_col_list)
+    # data_list_combined = np.concatenate(Kg_data_list)
+    # Kg = sp.sparse.coo_matrix(
+    #     (data_list_combined, (row_list_combined, col_list_combined)),
+    #     shape=(len(model.list_dof), len(model.list_dof)),
+    # ).tocsr()
     Kg = 0.5 * (Kg + Kg.transpose())
     if eval_mass:
-        row_list_combined = np.concatenate(Mg_row_list)
-        col_list_combined = np.concatenate(Mg_col_list)
-        data_list_combined = np.concatenate(Mg_data_list)
-        Mg = sp.sparse.coo_matrix(
-            (data_list_combined, (row_list_combined, col_list_combined)),
-            shape=(len(model.list_dof), len(model.list_dof)),
-        ).tocsr()
+        # row_list_combined = np.concatenate(Mg_row_list)
+        # col_list_combined = np.concatenate(Mg_col_list)
+        # data_list_combined = np.concatenate(Mg_data_list)
+        # Mg = sp.sparse.coo_matrix(
+        #     (data_list_combined, (row_list_combined, col_list_combined)),
+        #     shape=(len(model.list_dof), len(model.list_dof)),
+        # ).tocsr()
         Mg = 0.5 * (Mg + Mg.transpose())
         model.Mg = Mg
     model.Kg = Kg
@@ -339,42 +353,26 @@ def quasi_gram_schmidt(model, Kg):
         + np.where(
             (model.list_dof.list_dof & HEAVISIDE_DOFS == 0)
             & (model.list_dof.list_dof & BRANCH_DOFS != 0)
-            & (model.list_dof.list_dof & BRANCH_1_DOFS == 0)
-        )[0],
-        1
-        + np.where(
-            (model.list_dof.list_dof & HEAVISIDE_DOFS == 0)
-            & (model.list_dof.list_dof & BRANCH_DOFS != 0)
-            & (model.list_dof.list_dof & BRANCH_1_DOFS != 0)
         )[0],
         1
         + np.where(
             (model.list_dof.list_dof & HEAVISIDE_DOFS != 0)
             & (model.list_dof.list_dof & BRANCH_DOFS != 0)
-            & (model.list_dof.list_dof & BRANCH_1_DOFS == 0)
-        )[0],
-        1
-        + np.where(
-            (model.list_dof.list_dof & HEAVISIDE_DOFS != 0)
-            & (model.list_dof.list_dof & BRANCH_DOFS != 0)
-            & (model.list_dof.list_dof & BRANCH_1_DOFS != 0)
         )[0],
     ]
-    for i, nodes in enumerate(node_numbers):
-        counts = np.bitwise_count(model.list_dof.list_dof[nodes - 1])
-        if len(counts) != 0:
-            print(i, np.all(counts == counts[0]))
-            print(counts)
-        else:
-            print(i)
+    # for i, nodes in enumerate(node_numbers):
+    #     counts = np.bitwise_count(model.list_dof.list_dof[nodes - 1])
+    #     if len(counts) != 0:
+    #         print(i, np.all(counts == counts[0]))
+    #         print(counts)
+    #     else:
+    #         print(i)
     dof_types = [
-        BRANCH_DOFS & (~BRANCH_4_DOFS),
         BRANCH_DOFS,
-        HEAVISIDE_DOFS | BRANCH_DOFS & (~BRANCH_4_DOFS),
         HEAVISIDE_DOFS | BRANCH_DOFS,
     ]
-    contiguous = [True, True, True, True]
-    skip = [n_dof_per_node, n_dof_per_node, n_dof_per_node, n_dof_per_node]
+    contiguous = [True, True]
+    skip = [n_dof_per_node, n_dof_per_node]
 
     dof_numbers = [
         model.list_dof.get_elem_dof_numbers_flat(i, d).reshape((len(i), -1))

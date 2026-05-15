@@ -617,15 +617,21 @@ def enriched_shape_functions(
         phi_t = np.sum(elem.phi_t * N[:, : elem.N_FN], axis=1)
     to_flip = None
     if enforce_sign is not None:
-        to_flip = (phi_n != 0.0) & (np.sign(phi_n) != enforce_sign)
+        eps = 1e-16
+        is_zero = phi_n == 0.0
+        phi_n[is_zero] = enforce_sign * eps
+
+        to_flip = np.sign(phi_n) != enforce_sign
+        phi_n[to_flip] *= -1
         if np.any(to_flip):
             print("warning had to flip", np.sum(to_flip))
-            print("phi_n:", elem.phi_n)
-        phi_n[to_flip] *= -1
 
     if elem.h_enrich:
         assert phi_n is not None and phi_t is not None
-        h_shifted = (np.sign(phi_n)[:, None] - np.sign(elem.phi_n)) / 2
+        sign = np.where(phi_n >= 0.0, 1.0, -1.0)
+        sign_i = np.where(elem.phi_n >= 0.0, 1.0, -1.0)
+        # h_shifted = (np.sign(phi_n)[:, None] - np.sign(elem.phi_n)) / 2
+        h_shifted = (sign[:, None] - sign_i) / 2
         begin_h, end_h = elem.N_FN, elem.N_FN + elem.H_FN
         N[:, begin_h:end_h] = h_shifted * N[:, : elem.N_FN]
         dN_dxi[:, :, begin_h:end_h] = h_shifted[:, None, :] * dN_dxi[:, :, : elem.N_FN]
@@ -638,9 +644,10 @@ def enriched_shape_functions(
         r = np.sqrt(phi_n**2 + phi_t**2)
         r = np.maximum(r, 1e-14)  # avoid divide by zero
         sqrt_r = np.sqrt(r)
-        sqrt_r_i = (elem.phi_n**2 + elem.phi_t**2) ** (1 / 4)
+        phi_n_i_safe = np.where(elem.phi_n == 0.0, 1e-16, elem.phi_n)
+        sqrt_r_i = (phi_n_i_safe**2 + elem.phi_t**2) ** (1 / 4)
         theta = np.atan2(phi_n, phi_t)
-        theta_i = np.atan2(elem.phi_n, elem.phi_t)
+        theta_i = np.atan2(phi_n_i_safe, elem.phi_t)
         # sin(theta) = phi_n / r, cos(theta) = phi_t / r
         dr_dxi = (
             1 / r[:, None] * (phi_n[:, None] * dphi_n_dxi + phi_t[:, None] * dphi_t_dxi)
@@ -670,43 +677,15 @@ def enriched_shape_functions(
         ramp = np.sum(N[:, np.where(elem.in_range)[0]], axis=1)
         dramp_dxi = np.sum(dN_dxi[:, :, np.where(elem.in_range)[0]], axis=2)
 
-        # ramped_bf = bf * ramp[:, None]
-        #
-        # ramp_i = elem.in_range.astype(float)
-        # ramped_shifter = bf_i * ramp_i[:, None]
-        #
-        # interpolant = np.sum(
-        #     ramped_shifter[None, :, :] * N[:, : elem.N_FN, None], axis=1
-        # )
-
         interpolant = np.sum(bf_i[None, :, :] * N[:, : elem.N_FN, None], axis=1)
         bf_shifted = bf - interpolant
 
-        # bf_shifted = ramped_bf - interpolant
-        #
         begin_tip = elem.N_FN + int(elem.h_enrich) * elem.H_FN
         end_tip = begin_tip + elem.TIP_FN
-        #
-        # N[:, begin_tip:end_tip] = (bf_shifted[:, None, :] * Q[:, :, None]).reshape(
-        #     -1, elem.TIP_FN
-        # )
 
         N[:, begin_tip:end_tip] = (
             ramp[:, None, None] * bf_shifted[:, None, :] * Q[:, :, None]
         ).reshape(-1, elem.TIP_FN)
-
-        # dramped_bf_dxi = (
-        #     dramp_dxi[:, :, None] * bf[:, None, :] + ramp[:, None, None] * dbf_dxi
-        # )
-        #
-        # dinterpolant_dxi = np.sum(
-        #     ramped_shifter[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
-        # )
-        #
-        # dbf_shifted_dxi = dramped_bf_dxi - dinterpolant_dxi
-        #
-        # term_A = dbf_shifted_dxi[:, None, :, :] * Q[:, :, None, None]
-        # term_B = bf_shifted[:, None, None, :] * dQ_dxi[:, :, :, None]
 
         dbf_shifted_dxi = dbf_dxi - np.sum(
             bf_i[None, None, :, :] * dN_dxi[:, :, : elem.N_FN, None], axis=2
@@ -731,8 +710,6 @@ def enriched_shape_functions(
         )
 
         combined_terms = term_A.swapaxes(1, 2) + term_B + term_C
-
-        # combined_terms = term_A.swapaxes(1, 2) + term_B
 
         N_points, N_dims = combined_terms.shape[0], combined_terms.shape[1]
 
