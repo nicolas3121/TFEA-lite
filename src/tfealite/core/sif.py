@@ -113,14 +113,24 @@ class DisplacementCorrelationMethodSIF:
         p1 = bspline(u_i)
 
         mesh = model.mesh
+        # cut_elem_ids = np.array(
+        #     [
+        #         elem_id - 1
+        #         for elem_id, (cut_type, _, _) in cut_info.items()
+        #         if cut_type != CutType.NONE
+        #     ]
+        # )
+        original_ids = mesh.cell_data["eid"]
         cut_elem_ids = np.array(
             [
                 elem_id - 1
-                for elem_id, (cut_type, _, _) in cut_info.items()
+                for elem_id, (_, cut_type, _) in cut_info.items()
                 if cut_type != CutType.NONE
             ]
         )
+        assert np.all(original_ids[cut_elem_ids] == cut_elem_ids + 1)
         cut_mesh = mesh.extract_cells(cut_elem_ids)
+        original_cell_ids = cut_mesh.cell_data["eid"]
 
         tip_3d = np.append(tip, 0.0)
         p1_3d = np.column_stack((p1, np.zeros(p1.shape[0])))
@@ -128,23 +138,24 @@ class DisplacementCorrelationMethodSIF:
         tip_elem_idx = cut_mesh.find_containing_cell(tip_3d)
         # assert tip_elem_idx != -1, "Couldn't find element containing tip"
         if tip_elem_idx == -1:
-            raise ValueError
-        tip_elem_id = cut_elem_ids[tip_elem_idx]
-        tip_elem = model.elements[tip_elem_id]
+            for _, (_, cut_type, _) in cut_info.items():
+                if cut_type == CutType.PARTIAL:
+                    break
+            else:
+                print("couldn't find tip")
+                raise ValueError
+        # tip_elem_id = original_cell_ids[tip_elem_idx]
+        # tip_elem = model.elements[tip_elem_id - 1]
 
-        elem = _build_elem_2d(model, level_set, CutType.PARTIAL, tip_elem)
-        tip_nat_coords = elem._cal_tip_nat_coords()
-        real_tip_coords = (
-            elem._base_shape_functions(tip_nat_coords)[0] @ elem.node_coords
-        )
+        # elem = _build_elem_2d(model, level_set, CutType.PARTIAL, tip_elem)
+        # tip_nat_coords = elem._cal_tip_nat_coords()
 
         cell_indices = cut_mesh.find_containing_cell(p1_3d)
         orphans_mask = cell_indices == -1
         if np.any(orphans_mask):
             cell_indices[orphans_mask] = cut_mesh.find_closest_cell(p1_3d[orphans_mask])
 
-        p1_elem_indices = cut_elem_ids[cell_indices]
-        # print("p1_elem_indices", p1_elem_indices)
+        p1_elem_indices = original_cell_ids[cell_indices]
 
         sort_idx = np.argsort(p1_elem_indices)
         sorted_cells = p1_elem_indices[sort_idx]
@@ -156,8 +167,9 @@ class DisplacementCorrelationMethodSIF:
         r_1_star = np.full(p1.shape[0], np.nan)
 
         for elem_id, point_idx_batch in zip(unique_cells, grouped_point_indices):
-            element = model.elements[elem_id]
-            cut_type = cut_info[elem_id + 1][0]
+            element = model.elements[elem_id - 1]
+            cut_type = cut_info[elem_id][1]
+            print("cut_type", cut_type)
 
             elem = _build_elem_2d(model, level_set, cut_type, element)
             _, nat_coords_batch = elem.nearest_point_on_crack(p1[point_idx_batch])
@@ -165,7 +177,7 @@ class DisplacementCorrelationMethodSIF:
                 np.asarray(element[4]), model.list_dof, model.Ug
             ).reshape((-1, 2))
             jump_shape_fn_batch, r_1_batch = elem.jump_shape_functions(
-                nat_coords_batch, real_tip_coords
+                nat_coords_batch, tip
             )
 
             jump[point_idx_batch, :] = jump_shape_fn_batch @ Ue
@@ -198,24 +210,11 @@ class DisplacementCorrelationMethodSIF:
         coef = (self.shear_mod / (self.kosolov + 1.0)) * np.sqrt(2.0 * np.pi / r_clean)
         K_I_star = coef * jump_local[:, 1]
         K_II_star = coef * jump_local[:, 0]
-        #
-        # r_a, r_b = r_clean[:-1], r_clean[1:]
-        #
-        # extrap_multiplier = r_b / (r_b - r_a)
-        # r_ratio = r_a / r_b
-        #
-        # K_I_ext = extrap_multiplier * (K_I_star[:-1] - r_ratio * K_I_star[1:])
-        # K_II_ext = extrap_multiplier * (K_II_star[:-1] - r_ratio * K_II_star[1:])
-        #
-        # return float(np.mean(K_I_ext)), float(np.mean(K_II_ext))
-        # Safety check: OLS requires at least 2 points to define a line
+
         if len(r_clean) < 2:
             print("Warning: < 2 valid radial extraction points. Extrapolation failed.")
             return float("nan"), float("nan")
 
-        # np.polyfit(x, y, degree) returns coefficients highest-power first.
-        # For degree 1 (linear), it returns [slope (c_1), intercept (c_0)].
-        # We extract index [1] to get the y-intercept at r=0.
         K_I_final = np.polyfit(r_clean, K_I_star, 1)[1]
         K_II_final = np.polyfit(r_clean, K_II_star, 1)[1]
 
@@ -336,10 +335,17 @@ class DisplacementCorrelationMethodSIF3D:
         inside_mask = enclosed_result["SelectedPoints"] == 1
 
         mesh = model.mesh
+        # cut_elem_ids = np.array(
+        #     [
+        #         elem_id - 1
+        #         for elem_id, (cut_type, _, _) in cut_info.items()
+        #         if cut_type != CutType.NONE
+        #     ]
+        # )
         cut_elem_ids = np.array(
             [
                 elem_id - 1
-                for elem_id, (cut_type, _, _) in cut_info.items()
+                for elem_id, (_, cut_type, _) in cut_info.items()
                 if cut_type != CutType.NONE
             ]
         )
@@ -375,7 +381,8 @@ class DisplacementCorrelationMethodSIF3D:
 
         for elem_id, point_idx_batch in zip(unique_cells, grouped_point_indices):
             element = model.elements[elem_id]
-            cut_type = cut_info[elem_id + 1][0]
+            cut_type = cut_info[elem_id + 1][1]
+            print("cut_type", cut_type)
 
             elem = _build_elem_3d(model, level_set, cut_type, element)
             print("tip", p1_tip[point_idx_batch])

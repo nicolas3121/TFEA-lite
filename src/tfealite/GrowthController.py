@@ -133,7 +133,7 @@ class GrowthController:
             )
 
             model.insert_crack_spline(
-                bspline, embedded=self.embedded, h=self.h, snapping_tolerance=0.03
+                bspline, embedded=self.embedded, h=self.h, snapping_tolerance=0.08
             )
 
             model.gen_list_dof(dof_per_node=self.dof_per_node)

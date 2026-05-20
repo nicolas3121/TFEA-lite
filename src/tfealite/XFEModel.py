@@ -31,6 +31,7 @@ class XFEModel(FEModel):
         self.corrected = corrected
         self.mesh = None
         self.mesh_surface = None
+        self.degenerate_quads = None
         if corrected:
             self.in_range = np.zeros(self.n_nodes, dtype=np.int32)
         else:
@@ -50,6 +51,8 @@ class XFEModel(FEModel):
         assert self.list_dof is not None
         assert self.level_sets
         partial_cuts = []
+        degenerate_quads = []
+        diagonal_nodes = []
         for elem in self.elements:
             id = elem[0]
             nodes = np.asarray(elem[4])
@@ -58,6 +61,13 @@ class XFEModel(FEModel):
                 if cut_type != CutType.NONE:
                     if id in self.cut_info:
                         print("warning: element already cut by other level set")
+                    phi_n, _ = ls.get(nodes, None)
+                    is_zero = np.isclose(phi_n, 0.0, atol=1e-10)
+                    if touching:
+                        print("warning somethign is touching still")
+                    if not touching and np.any(is_zero):
+                        degenerate_quads.append(elem)
+                        diagonal_nodes.append(np.where(is_zero)[0])
                     if cut_type == CutType.PARTIAL:
                         partial_cuts.append((id, (i, cut_type, tip)))
                         if self.tip_enrichment:
@@ -72,7 +82,6 @@ class XFEModel(FEModel):
                         # touching = np.argwhere(np.isclose(phi_n, 0))
                         if touching:
                             # print("touching")
-                            phi_n, _ = ls.get(nodes, None)
                             filtered = nodes[
                                 np.argwhere(np.isclose(phi_n, 0, atol=1e-10))
                             ]
@@ -128,6 +137,11 @@ class XFEModel(FEModel):
                 self.tip[nodes - 1] = tip
                 self.ls[nodes - 1] = i
                 self.list_dof.remove_dofs(nodes, IS_HEAVISIDE)
+
+        self.degenerate_quads = degenerate_quads
+        # tri_id = self.elements[-1][0] + 1
+        # for elem in degenerate_quads:
+        #     nodes = elem[4]
 
         self.list_dof.update()
 

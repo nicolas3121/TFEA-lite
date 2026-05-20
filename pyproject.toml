@@ -18,6 +18,7 @@ dependencies = [
     "scipy",
     "pyvista",
 	"numba",
+	"geomdl",
 ]
 
 [project.optional-dependencies]

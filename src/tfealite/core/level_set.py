@@ -129,14 +129,14 @@ class LevelSet:
         if embedded:
             in_front |= np.isclose(u_i, 0.0, 1e-12)
 
-        to_snap = np.where(
-            (np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h) & ~in_front)
-        )[0]
-        global_to_snap = indices_subset[to_snap]
-
-        nodes[global_to_snap, 1:3] -= phi_n_subset[to_snap, None] * n_vec[to_snap, :]
-        coordinates[global_to_snap] = nodes[global_to_snap, 1:3]
-        self.phi_n[global_to_snap] = 0.0
+        # to_snap = np.where(
+        #     (np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h) & ~in_front)
+        # )[0]
+        # global_to_snap = indices_subset[to_snap]
+        #
+        # nodes[global_to_snap, 1:3] -= phi_n_subset[to_snap, None] * n_vec[to_snap, :]
+        # coordinates[global_to_snap] = nodes[global_to_snap, 1:3]
+        # self.phi_n[global_to_snap] = 0.0
 
         def arc_length(u, _):
             return np.linalg.norm(bspline(np.atleast_1d(np.asarray(u)), nu=1), axis=1)
@@ -177,6 +177,21 @@ class LevelSet:
             phi_t2 = np.full(coordinates.shape[0], np.nan, dtype=np.float64)
             cal_near_tip(t2_pt, 0.0, 1, indices_near_tip2, phi_t2)
             self.phi_t_list.append(phi_t2)
+
+        to_snap = np.where(
+            (np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h))
+        )[0]
+        global_to_snap = indices_subset[to_snap]
+
+        signs = np.where(phi_n_subset[to_snap] >= 0, 1.0, -1.0)
+
+        safe_dist = signs * (snapping_tolerance * h * 1.01)
+
+        shift_mag = safe_dist - phi_n_subset[to_snap]
+
+        nodes[global_to_snap, 1:3] += shift_mag[:, None] * n_vec[to_snap, :]
+        coordinates[global_to_snap] = nodes[global_to_snap, 1:3]
+        self.phi_n[global_to_snap] = safe_dist
 
         self.embedded = embedded
 
@@ -396,56 +411,66 @@ class LevelSet:
     def is_cut(self, element) -> Tuple[CutType, None | int, bool]:
         assert self.phi_n is not None
         assert self.phi_t_list is not None
+
+        ZERO_TOL = 1e-10
+        ROOT_TOL = 1e-10
+        DENOM_TOL = 1e-12
+
         nodes = np.asarray(element[4]) - 1
         elem_type = element[1]
         num_edges, denom_edges = ELEM_EDGES[elem_type]
         phi_n = self.phi_n[nodes]
+
         if np.any(np.isnan(phi_n)):
             return CutType.NONE, None, False
+
         n_nodes = len(nodes)
-        # no sign change of normal level set inside element or at node / edge
-        sign_n = (1 - np.isclose(phi_n, 0, atol=1e-12)) * np.sign(phi_n)
+
+        sign_n = (1 - np.isclose(phi_n, 0, atol=ZERO_TOL)) * np.sign(phi_n)
         m = sign_n[denom_edges] * sign_n[num_edges]
+
         if np.all(m > 0):
             return CutType.NONE, None, False
+
         for phi_t_i in self.phi_t_list:
             phi_t = phi_t_i[nodes]
-            sign_t = (1 - np.isclose(phi_t, 0, atol=1e-12)) * np.sign(phi_t)
+            sign_t = (1 - np.isclose(phi_t, 0, atol=ZERO_TOL)) * np.sign(phi_t)
             if np.sum(sign_t) == n_nodes:
                 return CutType.NONE, None, False
+
         num = phi_n[num_edges]
         denom = num - phi_n[denom_edges]
-        unsolvable = denom == 0
+
+        unsolvable = np.abs(denom) < DENOM_TOL
         denom += unsolvable
+
         N1 = np.divide(num, denom, out=np.zeros_like(num), where=~unsolvable)
-        in_element = (N1 >= 0) & (N1 <= 1)
+
+        in_element = (N1 >= -ROOT_TOL) & (N1 <= 1.0 + ROOT_TOL)
+
         actual_cuts = ~unsolvable & in_element
         n_actual_cuts = np.sum(actual_cuts)
-        # touching = not (
-        #     np.any(
-        #         actual_cuts
-        #         & ~np.isclose(N1, 0, atol=1e-12)
-        #         & ~np.isclose(N1, 1, atol=1e-12)
-        #     )
-        #     or n_actual_cuts == actual_cuts.shape[0]
-        # )
+
         has_positive = np.any(sign_n > 0)
         has_negative = np.any(sign_n < 0)
-
         touching = not (has_positive and has_negative)
+
         if n_actual_cuts == 0:
             return CutType.NONE, None, False
 
         for i, phi_t_i in enumerate(self.phi_t_list):
             phi_t = phi_t_i[nodes]
             d_t = N1 * phi_t[denom_edges] + (1 - N1) * phi_t[num_edges]
+
             x = np.sum(
-                (1 - np.isclose(d_t, 0, atol=1e-12)) * np.sign(d_t) * actual_cuts
+                (1 - np.isclose(d_t, 0, atol=ZERO_TOL)) * np.sign(d_t) * actual_cuts
             )
+
             if x == n_actual_cuts:
                 return CutType.NONE, None, False
             if x > -n_actual_cuts and n_actual_cuts > 1:
                 return CutType.PARTIAL, i, touching
+
         return CutType.CUT, None, touching
 
     def in_range(self, element, radius):

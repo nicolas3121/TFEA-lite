@@ -196,6 +196,7 @@ def partial_cut_embedding_tetr_iter(Nc, tip, tip_on_interface, range_iter=range(
 
 
 def cut_embedding_tri_iter(Nc, range=range(4)):
+    ZERO_TOL = 1e-10
     for i in range:
         if i != 3:
             Ni = np.eye(3)
@@ -204,42 +205,12 @@ def cut_embedding_tri_iter(Nc, range=range(4)):
         else:
             Ni = Nc.copy()
         detJi = np.linalg.det(Ni)
-        if not np.isclose(detJi, 0.0, atol=1e-10):
+        if not np.abs(detJi) < ZERO_TOL:
             yield Ni, detJi
 
 
-# def cut_embedding_elem_iter_2d(Nc, phi_n, range=range(4)):
-#     phi_n_intersections = phi_n @ Nc
-#     Ni_pos = []
-#     Ni_neg = []
-#     for i in range:
-#         if i != 3:
-#             Ni = np.eye(3)
-#             Ni[:, (i + 1) % 3] = Nc[:, i]
-#             Ni[:, (i + 2) % 3] = Nc[:, (i + 2) % 3]
-#             phi_n_sum = (
-#                 phi_n[i] + phi_n_intersections[i] + phi_n_intersections[(i + 2) % 3]
-#             )
-#             phi_n_i = np.zeros(3)
-#             phi_n_i[i] = phi_n[i]
-#             phi_n_i[[(i + 1 % 3), (i + 2 % 3)]] = phi_n_intersections[[i, (i + 2) % 3]]
-#             sign_sum = np.sum(
-#                 (1 - np.isclose(phi_n_i, 0.0, atol=1e-12)) * np.sign(phi_n_i)
-#             )
-#         else:
-#             Ni = Nc.copy()
-#             sign_sum = np.sum((1 - np.isclose(phi_n, 0.0, atol=1e-12)) * np.sign(phi_n))
-#
-#         detJi = np.linalg.det(Ni)
-#         if not np.isclose(detJi, 0.0, atol=1e-8):
-#             if sign_sum < 0:
-#                 Ni_neg.append(Ni)
-#             else:
-#                 Ni_pos.append(Ni)
-#     Ni_merged = []
-
-
 def partial_cut_embedding_tri_iter(Nc, tip, range):
+    ZERO_TOL = 1e-10
     Ni_template = np.zeros((3, 3))
     Ni_template[:, 0] = tip
     for i in range:
@@ -247,7 +218,7 @@ def partial_cut_embedding_tri_iter(Nc, tip, range):
         Ni[int((i % 5 + 1) / 2), 1 + i % 2] = 1
         Ni[:, 2 - i % 2] = Nc[:, int(i / 2)]
         detJi = np.linalg.det(Ni)
-        if not np.isclose(detJi, 0, atol=1e-10):
+        if not np.abs(detJi) < ZERO_TOL:
             yield Ni, detJi
 
 
@@ -575,8 +546,11 @@ def fill_element_displacement(elem_nodes, list_dof, Ug):
 #             N_points, N_dims, elem.TIP_FN
 #         )
 #     return N, dN_dxi
+#
 
 
+#
+#
 def enriched_shape_functions(
     elem,
     shape_fn,
@@ -617,9 +591,9 @@ def enriched_shape_functions(
         phi_t = np.sum(elem.phi_t * N[:, : elem.N_FN], axis=1)
     to_flip = None
     if enforce_sign is not None:
-        eps = 1e-16
-        is_zero = phi_n == 0.0
-        phi_n[is_zero] = enforce_sign * eps
+        # eps = 1e-16
+        # is_zero = phi_n == 0.0
+        # phi_n[is_zero] = enforce_sign * eps
 
         to_flip = np.sign(phi_n) != enforce_sign
         phi_n[to_flip] *= -1

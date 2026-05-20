@@ -47,7 +47,7 @@ H = 40.0
 dist_opp_edge = 23.0
 
 p1 = np.array([W - dist_opp_edge - 3, 0.0])
-p2 = np.array([W - dist_opp_edge + 2.5, 0.0])
+p2 = np.array([W - dist_opp_edge + 3, 0.0])
 
 control_points = np.linspace(p1, p2, 12).tolist()
 n = len(control_points)
@@ -171,7 +171,7 @@ growth_controller = tf.GrowthController(
     reals,
     True,  # tip_enrichment
     2,  # geometrical_range
-    True,  # corrected
+    False,  # corrected
     h,  # h
     False,  # embedded
     tf.IS_2D,  # dof_per_node
