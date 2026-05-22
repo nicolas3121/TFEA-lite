@@ -95,7 +95,7 @@ class DisplacementCorrelationMethodSIF:
             t *= -1
 
         t = t / np.linalg.norm(t)
-        n = np.array([-t[1], t[0]])
+        # n = np.array([-t[1], t[0]])
 
         p1 = tip[None, :] - self.r[:, None] * t[None, :]
 
@@ -144,11 +144,20 @@ class DisplacementCorrelationMethodSIF:
             else:
                 print("couldn't find tip")
                 raise ValueError
-        # tip_elem_id = original_cell_ids[tip_elem_idx]
-        # tip_elem = model.elements[tip_elem_id - 1]
+        tip_elem_id = original_cell_ids[tip_elem_idx]
+        tip_elem = model.elements[tip_elem_id - 1]
 
-        # elem = _build_elem_2d(model, level_set, CutType.PARTIAL, tip_elem)
-        # tip_nat_coords = elem._cal_tip_nat_coords()
+        elem = _build_elem_2d(model, level_set, CutType.PARTIAL, tip_elem)
+        tip_nat_coords = elem._cal_tip_nat_coords()
+        N_tip, dN_dxi_tip = elem._base_shape_functions(tip_nat_coords)
+        J = dN_dxi_tip @ elem.node_coords
+        dN_dxy_tip = np.linalg.solve(J, dN_dxi_tip)
+        real_tip = N_tip[0] @ elem.node_coords
+        real_tip_n = dN_dxy_tip[0] @ elem.phi_n
+        real_tip_n = real_tip_n / np.linalg.norm(real_tip_n)
+        real_tip_t = dN_dxy_tip[0] @ elem.phi_t
+        real_tip_t = real_tip_t - np.dot(real_tip_n, real_tip_t) * real_tip_n
+        real_tip_t = real_tip_t / np.linalg.norm(real_tip_t)
 
         cell_indices = cut_mesh.find_containing_cell(p1_3d)
         orphans_mask = cell_indices == -1
@@ -177,7 +186,7 @@ class DisplacementCorrelationMethodSIF:
                 np.asarray(element[4]), model.list_dof, model.Ug
             ).reshape((-1, 2))
             jump_shape_fn_batch, r_1_batch = elem.jump_shape_functions(
-                nat_coords_batch, tip
+                nat_coords_batch, real_tip
             )
 
             jump[point_idx_batch, :] = jump_shape_fn_batch @ Ue
@@ -204,7 +213,7 @@ class DisplacementCorrelationMethodSIF:
                 "Richardson extrapolation requires at least 2 extraction points."
             )
 
-        T_matrix = np.array([t, n])
+        T_matrix = np.array([real_tip_t, real_tip_n])
         jump_local = jump_clean @ T_matrix.T
 
         coef = (self.shear_mod / (self.kosolov + 1.0)) * np.sqrt(2.0 * np.pi / r_clean)
@@ -218,7 +227,7 @@ class DisplacementCorrelationMethodSIF:
         K_I_final = np.polyfit(r_clean, K_I_star, 1)[1]
         K_II_final = np.polyfit(r_clean, K_II_star, 1)[1]
 
-        return float(K_I_final), float(K_II_final)
+        return float(K_I_final), float(K_II_final), T_matrix
 
 
 class DisplacementCorrelationMethodSIF3D:

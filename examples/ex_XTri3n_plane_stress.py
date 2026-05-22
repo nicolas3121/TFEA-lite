@@ -10,7 +10,7 @@ model = tf.XFEModel(
 model.insert_crack_segment(np.array([0, 0.25]), np.array([0.51, 0.25]), embedded=False)
 
 model.gen_list_dof(dof_per_node=tf.IS_2D)
-model.cal_global_matrices(tf.XTri3n)
+model.cal_global_matrices({"Tri3n": tf.XTri3n})
 
 print(model.list_dof)
 

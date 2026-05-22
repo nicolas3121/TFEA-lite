@@ -28,7 +28,7 @@ nu = 0.29
 nu_eff = nu / (1.0 - nu)
 
 # --- 1. Define Base Material (Plate) ---
-E_plate = 1.0
+E_plate = 209e9
 E_eff_plate = E_plate / (1.0 - nu**2)
 
 E_pin = 100.0 * E_plate
@@ -47,7 +47,7 @@ H = 40.0
 dist_opp_edge = 23.0
 
 p1 = np.array([W - dist_opp_edge - 3, 0.0])
-p2 = np.array([W - dist_opp_edge + 3, 0.0])
+p2 = np.array([W - dist_opp_edge + 2.5, 0.0])
 
 control_points = np.linspace(p1, p2, 12).tolist()
 n = len(control_points)
@@ -114,12 +114,12 @@ def bc_fn(model):
 
 def force_fn(model):
     Fg = np.zeros(len(model.list_dof), dtype=float)
-    Fg[model.list_dof[(node_top_id, tf.DofType.UY)]] = 1000.0
+    Fg[model.list_dof[(node_top_id, tf.DofType.UY)]] = 13.8e3
     model.Fg = Fg
 
 
 def plot_fn(model, bspline, i):
-    displacement_mult = 0
+    displacement_mult = 3e-5
     mesh1 = my_build_Quad4n(model, mult=displacement_mult).cast_to_unstructured_grid()
     ghosts = np.argwhere(mesh1["is_enriched"] > 0)
     mesh1.remove_cells(ghosts, inplace=True)
@@ -149,12 +149,12 @@ def plot_fn(model, bspline, i):
         # scalar_bar_args=sbar_args,
     )
 
-    u_new = np.linspace(0, 1, 1000)
-    spline_pts_2d = bspline(u_new)  # Output shape is (100, 2)
-    z_coords = np.zeros((spline_pts_2d.shape[0], 1))
-    spline_pts_3d = np.hstack((spline_pts_2d, z_coords))
-    spline_pv_mesh = pv.lines_from_points(spline_pts_3d)
-    pl.add_mesh(spline_pv_mesh, color="red", line_width=4, label="Crack Spline")
+    # u_new = np.linspace(0, 1, 1000)
+    # spline_pts_2d = bspline(u_new)  # Output shape is (100, 2)
+    # z_coords = np.zeros((spline_pts_2d.shape[0], 1))
+    # spline_pts_3d = np.hstack((spline_pts_2d, z_coords))
+    # spline_pv_mesh = pv.lines_from_points(spline_pts_3d)
+    # pl.add_mesh(spline_pv_mesh, color="red", line_width=4, label="Crack Spline")
     pl.zoom_camera("tight")
     pl.view_xy()
     export_filename = f"CT_hole_{i}.png"

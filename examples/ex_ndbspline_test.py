@@ -1,6 +1,7 @@
 import tfealite as tf
 from tfealite.core.surfaces import (
-    init_half_coin_crack_geomdl,
+    # init_half_coin_crack_geomdl,
+    init_crack_plane_geomdl,
     geomdl_to_NdBSplines,
 )
 from tfealite.core.level_set import LevelSet
@@ -21,27 +22,24 @@ model = tf.XFEModel(
     materials,
     reals,
     tip_enrichment=True,
-    geometrical_range=0.1,
+    geometrical_range=0.13,
     corrected=True,
 )
 # model.show()
 
 
 theta = np.pi / 7
-rotation = np.array(
-    [[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]]
-)
-geomdl_crack = init_half_coin_crack_geomdl(
-    0.3, rotation=rotation, translation=np.array([0.5, 0, 0.43])
+# rotation = np.array(
+#     [[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]]
+# )
+# geomdl_crack = init_half_coin_crack_geomdl(0.3, translation=np.array([0.5, 0, 0.43]))
+geomdl_crack = init_crack_plane_geomdl(
+    2, 0.7, translation=np.array([0.5, 0.5, 0.53]), embedded=True
 )
 scipy_crack = geomdl_to_NdBSplines(geomdl_crack)
-test_coords = np.array([[1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
-print("test_coords", scipy_crack[0](test_coords, nu=(1, 0)))
-test_coords = np.array([[1.0, 0.0], [1.0, 0.5], [1.0, 1.0]])
-print("test_coords", scipy_crack[0](test_coords, nu=(0, 1)))
 
 ls = LevelSet()
-ls.gen_from_ndbsplines(nodes, scipy_crack, 0.4, 0.0)
+ls.gen_from_ndbsplines(nodes, scipy_crack, 0.05, 0.13)
 
 model.level_sets.append(ls)
 
@@ -72,7 +70,7 @@ model.gen_nodal_forces(sel_condition, force_expression)
 model.solve_static()
 # model.Ug = np.zeros_like(model.Ug)
 
-mult = 1e5
+mult = 1e4
 # model.Ug = np.zeros(len(model.list_dof))
 mesh1 = my_build_Tetr4n(model, mult=mult).cast_to_unstructured_grid()
 ghosts = np.argwhere(mesh1["is_enriched"] > 0)

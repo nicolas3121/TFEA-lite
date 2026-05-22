@@ -401,7 +401,7 @@ def test_pure_mode_1_analytical_benchmark(
     corrected,
     gen=tf.gen_rect_Quad4n,
     error_fn=calculate_element_errors,
-    geometrical_range=1.5,
+    geometrical_range=1.0,
     crack_angle=0.0,
     plot=False,
 ):
@@ -628,9 +628,10 @@ def test_pure_mode_1_analytical_benchmark(
 
 
 def run_convergence_study(crack_angle=0.0):
-    mesh_sizes = [21, 33, 41, 51, 61, 81, 101, 121]
+    # mesh_sizes = [21, 33, 41, 51, 61, 81, 101, 121]
+    mesh_sizes = np.array([11, 21, 31, 41, 61, 81, 121, 161])
     # mesh_sizes = [40, 41, 42]
-    h_vals = [1.0 / n for n in mesh_sizes]
+    h_vals = [10.0 / n for n in mesh_sizes]
 
     errors_uncorr_en = []
     errors_corr_en = []
@@ -686,12 +687,10 @@ def run_convergence_study(crack_angle=0.0):
         f"L2 Norm     - Corrected Quad Rate (Slope):   {slope_corr_L2:.4f} (Expected: ~2.0)"
     )
 
-    # Plotting Energy and L2 Norm side-by-side
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    plt.figure(figsize=(6, 4))
+    ax1 = plt.gca()
 
-    # ------------------
-    # Plot Energy Norm
-    # ------------------
+    # Uncorrected (SO-XFEM)
     ax1.loglog(
         h_vals,
         errors_uncorr_en,
@@ -701,12 +700,13 @@ def run_convergence_study(crack_angle=0.0):
         linewidth=2,
         color="red",
         markerfacecolor="none",
-        label=f"Standard SGFEM Quads (Avg Slope: {slope_uncorr_en:.2f})",
+        label="SO-XFEM",
     )
     annotate_local_slopes(
         h_vals, errors_uncorr_en, ax1, text_offset=(-20, 30), x_is_h=True, color="red"
     )
 
+    # Corrected (SCO-XFEM)
     ax1.loglog(
         h_vals,
         errors_corr_en,
@@ -716,12 +716,13 @@ def run_convergence_study(crack_angle=0.0):
         linewidth=2,
         color="blue",
         markerfacecolor="none",
-        label=f"Stable-Corrected Quads (Avg Slope: {slope_corr_en:.2f})",
+        label="SCO-XFEM",
     )
     annotate_local_slopes(
         h_vals, errors_corr_en, ax1, text_offset=(20, -30), x_is_h=True, color="blue"
     )
 
+    # Theoretical Lines
     C_1_en = errors_corr_en[0] / (h_vals[0] ** 1.0)
     theo_1_en = [C_1_en * (h**1.0) for h in h_vals]
     ax1.loglog(
@@ -744,17 +745,32 @@ def run_convergence_study(crack_angle=0.0):
         label=r"Sub-optimal $\mathcal{O}(h^{0.5})$",
     )
 
-    ax1.set_xlabel(r"Element Size $h$", fontsize=14)
-    ax1.set_ylabel(r"Relative Energy Norm Error", fontsize=14)
+    # Formatting
+    ax1.set_xlabel(r"Element Size $h$", fontsize=13)
+    ax1.set_ylabel(r"Relative Energy Norm Error", fontsize=13)
     ax1.grid(True, which="both", ls="--", alpha=0.5)
     ax1.invert_xaxis()
     ax1.legend(fontsize=11, loc="upper right", framealpha=1.0, edgecolor="black")
-    ax1.set_xticks(h_vals)
-    ax1.set_xticklabels([f"{h:.3f}" for h in h_vals])
+
+    ax1.set_xticks(
+        h_vals,
+        labels=[f"{h:.3f}" for h in h_vals],
+        rotation=45,
+        ha="right",
+        rotation_mode="anchor",
+    )
+
+    plt.tight_layout()
+    plt.savefig("convergence_energy_norm.pdf", dpi=300, bbox_inches="tight")
+    plt.show()
 
     # ------------------
-    # Plot L2 Norm
+    # Plot 2: L2 Norm
     # ------------------
+    plt.figure(figsize=(6, 4))
+    ax2 = plt.gca()
+
+    # Uncorrected (SO-XFEM)
     ax2.loglog(
         h_vals,
         errors_uncorr_L2,
@@ -764,12 +780,13 @@ def run_convergence_study(crack_angle=0.0):
         linewidth=2,
         color="red",
         markerfacecolor="none",
-        label=f"Standard SGFEM Quads (Avg Slope: {slope_uncorr_L2:.2f})",
+        label="SO-XFEM",
     )
     annotate_local_slopes(
         h_vals, errors_uncorr_L2, ax2, text_offset=(-20, 30), x_is_h=True, color="red"
     )
 
+    # Corrected (SCO-XFEM)
     ax2.loglog(
         h_vals,
         errors_corr_L2,
@@ -779,12 +796,13 @@ def run_convergence_study(crack_angle=0.0):
         linewidth=2,
         color="blue",
         markerfacecolor="none",
-        label=f"Stable-Corrected Quads (Avg Slope: {slope_corr_L2:.2f})",
+        label="SCO-XFEM",
     )
     annotate_local_slopes(
         h_vals, errors_corr_L2, ax2, text_offset=(20, -30), x_is_h=True, color="blue"
     )
 
+    # Theoretical Lines
     C_2_L2 = errors_corr_L2[0] / (h_vals[0] ** 2.0)
     theo_2_L2 = [C_2_L2 * (h**2.0) for h in h_vals]
     ax2.loglog(
@@ -807,16 +825,23 @@ def run_convergence_study(crack_angle=0.0):
         label=r"Sub-optimal $\mathcal{O}(h^{1.0})$",
     )
 
-    ax2.set_xlabel(r"Element Size $h$", fontsize=14)
-    ax2.set_ylabel(r"Relative L2 Norm Error (Displacements)", fontsize=14)
+    # Formatting
+    ax2.set_xlabel(r"Element Size $h$", fontsize=13)
+    ax2.set_ylabel(r"Relative $L_2$ Norm Error", fontsize=13)
     ax2.grid(True, which="both", ls="--", alpha=0.5)
     ax2.invert_xaxis()
     ax2.legend(fontsize=11, loc="upper right", framealpha=1.0, edgecolor="black")
-    ax2.set_xticks(h_vals)
-    ax2.set_xticklabels([f"{h:.3f}" for h in h_vals])
+
+    ax2.set_xticks(
+        h_vals,
+        labels=[f"{h:.3f}" for h in h_vals],
+        rotation=45,
+        ha="right",
+        rotation_mode="anchor",
+    )
 
     plt.tight_layout()
-    plt.savefig("convergence_annotated_with_L2.pdf", dpi=300)
+    plt.savefig("convergence_L2_norm.pdf", dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -831,4 +856,4 @@ if __name__ == "__main__":
     )
 
     # Test 2: Run the full convergence study at 45 degrees
-    run_convergence_study(crack_angle=-np.pi / 4)
+    run_convergence_study(crack_angle=0)

@@ -240,6 +240,12 @@ class XQuad4n(Quad4n):
         )
         N1_diag = np.clip(N1_diag, 0, 1)
 
+        # N1 = np.where(N1 < SNAP_TOL, 0.0, N1)
+        # N1 = np.where(N1 > 1.0 - SNAP_TOL, 1.0, N1)
+        #
+        # N1_diag = np.where(N1_diag < SNAP_TOL, 0.0, N1_diag)
+        # N1_diag = np.where(N1_diag > 1.0 - SNAP_TOL, 1.0, N1_diag)
+
         Nc1 = np.array(
             [
                 [N1[n11], 0, 1 - N1_diag],

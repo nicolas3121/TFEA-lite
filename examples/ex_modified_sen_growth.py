@@ -7,7 +7,7 @@ import tfealite as tf
 
 from tfealite.visualization.build_mesh import (
     build_XQuad4n,
-    my_build_Quad4n,
+    my_build_mixed_mesh,
 )
 
 
@@ -33,7 +33,8 @@ E_eff_plate = E_plate / (1.0 - nu**2)
 E_pin = 100.0 * E_plate
 E_eff_pin = E_pin / (1.0 - nu**2)
 
-h = 0.2
+h = 0.15
+da = 0.15
 
 materials = [
     [1, {"E": E_eff_plate, "nu": nu_eff, "rho": 7850}],  # Material 1: Plate
@@ -51,32 +52,48 @@ dcm = DCMSIF(
     None,
 )
 
-p1 = np.array([62.5, 2.4])
-p2 = np.array([62.5, 5.0])
+p1 = np.array([62.5, -0.1])
+p2 = np.array([62.5, 2.5])
 
 control_points = np.linspace(p1, p2, 12).tolist()
 n = len(control_points)
 k = 2
 
 mesh = meshio.read("./modified_sen_hole_2d.msh")
+
 vertex_cells = mesh.cells_dict.get("vertex", [])
 vertex_tags = mesh.cell_data_dict.get("gmsh:physical", {}).get("vertex", [])
 
+# Build nodes array (ID, X, Y, Z)
 nodes = np.hstack([np.arange(1, mesh.points.shape[0] + 1)[:, None], mesh.points])
 
-quad_tags = mesh.cell_data_dict["gmsh:physical"]["quad"]
-
 elements = []
-for i, (element_nodes, phys_tag) in enumerate(zip(mesh.cells_dict["quad"], quad_tags)):
-    elements.append(
-        [
-            i + 1,
-            "Quad4n",
-            phys_tag,
-            1,
-            element_nodes + 1,
-        ]
-    )
+elem_id = 1
+
+# Map meshio cell string to your solver's element string
+supported_elements = {"quad": "Quad4n", "triangle": "Tri3n"}
+
+# Loop through supported types and extract them if they exist in the mesh
+for cell_type, elem_string in supported_elements.items():
+    if cell_type in mesh.cells_dict:
+        cells = mesh.cells_dict[cell_type]
+
+        # Safely get physical tags, default to an array of 1s if they are missing
+        phys_tags = mesh.cell_data_dict.get("gmsh:physical", {}).get(
+            cell_type, np.ones(len(cells), dtype=int)
+        )
+
+        for element_nodes, phys_tag in zip(cells, phys_tags):
+            elements.append(
+                [
+                    elem_id,
+                    elem_string,
+                    phys_tag,
+                    1,  # Real ID
+                    element_nodes + 1,  # 1-based node indexing
+                ]
+            )
+            elem_id += 1
 
 load_node_ids = []
 support_node_ids = []
@@ -118,12 +135,15 @@ def force_fn(model):
 
 
 def plot_fn(model, bspline, i):
-    displacement_mult = 0
-    mesh1 = my_build_Quad4n(model, mult=displacement_mult).cast_to_unstructured_grid()
+    displacement_mult = 0.00
+    mesh1 = my_build_mixed_mesh(
+        model, mult=displacement_mult
+    ).cast_to_unstructured_grid()
     ghosts = np.argwhere(mesh1["is_enriched"] > 0)
     mesh1.remove_cells(ghosts, inplace=True)
 
     mesh2 = build_XQuad4n(model, mult=displacement_mult)
+    # mesh3 = build_XTri3n(model, mult=displacement_mult)
     blocks = pv.MultiBlock([mesh1, mesh2])
 
     pv.set_plot_theme("document")
@@ -167,15 +187,15 @@ growth_controller = tf.GrowthController(
     materials,
     reals,
     True,
-    2,
+    1.5,
     True,
     0.2,
     False,
     tf.IS_2D,
-    {"Quad4n": tf.XQuad4n},
+    {"Quad4n": tf.XQuad4n, "Tri3n": tf.XTri3n},
     dcm,
     calculate_growth_direction,
-    0.3,
+    da,
     control_points,
     2,
     bc_fn,

@@ -1,4 +1,6 @@
 import tfealite as tf
+from geomdl import knotvector
+from scipy.interpolate import BSpline
 import scipy as sp
 import numpy as np
 from tfealite.core.dofs import HEAVISIDE_DOFS, BRANCH_DOFS, BASE_DOFS
@@ -51,35 +53,6 @@ def cal_approx_coeff(model):
     return coef
 
 
-# def calculate_angle(model, ortho_T):
-#     thetag = []
-#     Kg = ortho_T.T @ model.Kg.copy().tocsr() @ ortho_T
-#
-#     for id, dofs in enumerate(model.list_dof.list_dof):
-#         if dofs & (HEAVISIDE_DOFS | BRANCH_DOFS) == 0:
-#             continue
-#
-#         dof_numbers = np.concatenate(
-#             (
-#                 model.list_dof.get_elem_dof_numbers_flat(id + 1, BASE_DOFS).flatten(),
-#                 model.list_dof.get_elem_dof_numbers_flat(
-#                     id + 1, HEAVISIDE_DOFS
-#                 ).flatten(),
-#                 model.list_dof.get_elem_dof_numbers_flat(id + 1, BRANCH_DOFS).flatten(),
-#             )
-#         )
-#         theta = np.zeros((len(dof_numbers), len(dof_numbers)))
-#
-#         for j, j_dof in enumerate(dof_numbers):
-#             djj = Kg[j_dof, j_dof]
-#             for i, i_dof in enumerate(dof_numbers):
-#                 dii = Kg[i_dof, i_dof]
-#                 dij = Kg[j_dof, i_dof]
-#                 theta[i, j] = np.acos(dij / np.sqrt(dii * djj)) / np.pi * 180
-#
-#         thetag.append(theta)
-#
-#     return thetag
 def calculate_angle(model, ortho_T):
     thetag = []
     Kg = ortho_T.T @ model.Kg.copy().tocsr() @ ortho_T
@@ -189,11 +162,12 @@ def scaled_condition_number(K_sparse):
 
     # 5. Attempt to find the exact eigenvalues of Kd
     try:
+        # Find the largest magnitude eigenvalue
+        # (Using a looser tolerance 1e-3 to speed up convergence)
         lambda_max, _ = spla.eigsh(Kd, k=1, which="LM", tol=1e-3)
 
         # Find the smallest magnitude eigenvalue
         lambda_min, _ = spla.eigsh(Kd, k=1, which="SM", tol=1e-3)
-        # lambda_min, _ = spla.eigsh(Kd, k=1, sigma=1e-8, which="LM", tol=1e-3)
         # lambda_min, _ = spla.eigsh(Kd, k=1, sigma=1e-10, which="LM")
 
         scaled_cond = np.abs(lambda_max[0] / lambda_min[0])
@@ -302,15 +276,16 @@ def elem_func(
 
 
 # n = np.array([11, 21, 41, 81])
-n = np.array([11, 15, 21, 31, 41, 49, 55, 61, 71, 81, 91, 121, 161])
-n = np.array([11, 15, 21, 31, 41, 49, 55, 61, 71, 81, 91])
+n = np.array([11, 21, 31, 41, 61, 81, 121, 161])
+# n = np.array([11, 15, 21, 31, 41, 49, 55, 61, 71, 81, 91])
+# n = np.array([11, 41, 56, 80])
 conditioning_no_orth = []
 conditioning = []
 conditioning_fem = []
 
 
 for i in n:
-    nodes, elements = tf.gen_rect_Quad4n(L=100.0, H=100.0, nx=i, ny=i)
+    nodes, elements = tf.gen_rect_Quad4n(L=10.0, H=10.0, nx=i, ny=i)
     materials = [[1, {"E": 1, "nu": 0.33, "rho": 7850}]]
     reals = [[1, {"t": 1}]]
     model = tf.XFEModel(
@@ -319,17 +294,33 @@ for i in n:
         materials,
         reals,
         tip_enrichment=True,
-        geometrical_range=12,
-        corrected=True,
+        geometrical_range=1.0,
+        corrected=False,
     )
-    p1 = np.array([-0.1, 50])
-    p2 = np.array([50, 50])
-    model.insert_crack_segment(p1, p2, embedded=False)
+    L_crack = 10
+    crack_angle = 0
+
+    tip_x, tip_y = 5.0, 5.0
+    p1 = np.array(
+        [tip_x - L_crack * np.cos(crack_angle), tip_y - L_crack * np.sin(crack_angle)]
+    )
+    p2 = np.array([tip_x, tip_y])
+
+    control_points = np.linspace(p1, p2, 12).tolist()
+    n_spline = len(control_points)
+    k = 2
+    knots = knotvector.generate(k, n_spline)
+    bspline = BSpline(knots, np.array(control_points), k)
+
+    model.insert_crack_spline(
+        bspline, embedded=False, h=10.0 / i, snapping_tolerance=0.03
+    )
+    # model.insert_crack_segment(p1, p2, embedded=False)
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     # model.list_dof.remove_dofs(
     #     1 + np.arange(model.n_nodes), tf.DofType.HX | tf.DofType.HY
     # )
-    model.cal_global_matrices({"Quad4n": tf.XQuad4n}, eval_mass=True)
+    model.cal_global_matrices({"Quad4n": tf.XQuad4n}, eval_mass=False)
 
     def sel_condition(x, y, z):
         return y - 0.0
@@ -341,7 +332,7 @@ for i in n:
     # extra_fix_dofs = model.list_dof.get_elem_dof_numbers_flat(
     #     np.where(blending_nodes)[0][:2] + 1, BRANCH_4_DOFS
     # )
-
+    #
     # bc.my_gen_dirichlet_bc(model, sel_condition, extra_fix_dofs)
     model.gen_dirichlet_bc(sel_condition)
 
@@ -367,10 +358,9 @@ for i in n:
     model = tf.FEModel(nodes, elements, materials, reals)
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     model.cal_global_matrices({"Quad4n": tf.XQuad4n})
-    model.gen_dirichlet_bc(sel_condition)
-    c_fem = scaled_condition_number(model.P.T @ model.Kg @ model.P)
+    c_fem = scaled_condition_number(model.Kg)
     conditioning_fem.append(c_fem)
-    if i < 10:
+    if i < 34:
         nodes, elements = tf.gen_rect_Quad4n(L=1.0, H=1.0, nx=i, ny=i)
         materials = [[1, {"E": 1, "nu": 0.33, "rho": 7850}]]
         reals = [[1, {"t": 1}]]
@@ -381,15 +371,12 @@ for i in n:
             reals,
             tip_enrichment=True,
             geometrical_range=0.12,
-            corrected=True,
+            corrected=False,
         )
         p1 = np.array([-0.1, 0.5])
         p2 = np.array([0.5, 0.5])
         model.insert_crack_segment(p1, p2, embedded=False)
         model.gen_list_dof(dof_per_node=tf.IS_2D)
-        # model.list_dof.remove_dofs(
-        #     1 + np.arange(model.n_nodes), tf.DofType.HX | tf.DofType.HY
-        # )
         model.cal_global_matrices({"Quad4n": tf.XQuad4n})
 
         def sel_condition(x, y, z):
@@ -444,9 +431,9 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False):
 # If you prefer plotting against `h_vals`, just swap `n_vals` with `h_vals` in the plt.loglog
 # calls and set x_is_h=True in the annotate_local_slopes function.
 # --- Assuming you have an array `n` (e.g., n = np.array([11, 21, 41, 81])) ---
-h_vals = 1.0 / n
+h_vals = 10.0 / n
 
-plt.figure(figsize=(8, 6))
+plt.figure(figsize=(6, 4))
 ax = plt.gca()
 
 # 1. Standard FEM
@@ -476,7 +463,7 @@ plt.loglog(
     markersize=7,
     markerfacecolor="none",
     markeredgewidth=1.5,
-    label="Stable-Corrected XFEM",
+    label="SCO-XFEM",
 )
 # Annotate SC-XFEM (set x_is_h=True)
 annotate_local_slopes(h_vals, conditioning, ax, text_offset=(20, -20), x_is_h=True)
@@ -492,7 +479,7 @@ plt.loglog(
     markersize=7,
     markerfacecolor="none",
     markeredgewidth=1.5,
-    label="Standard XFEM",
+    label="S-XFEM",
 )
 # Annotate Standard XFEM (set x_is_h=True)
 annotate_local_slopes(
@@ -515,80 +502,16 @@ plt.legend(
     fontsize=11, loc="lower right", framealpha=1.0, edgecolor="black", fancybox=False
 )
 
-# Set x-axis ticks to show the exact h_vals, formatted to 3 decimal places
 plt.xticks(h_vals, labels=[f"{h:.3f}" for h in h_vals])
+# Set x-axis ticks to show the exact h_vals, formatted to 3 decimal places
+# plt.xticks(
+#     h_vals,
+#     labels=[f"{h:.3f}" for h in h_vals],
+#     rotation=45,
+#     ha="right",  # Aligns the end of the text with the tick mark
+#     rotation_mode="anchor",  # Ensures it rotates exactly around the tick
+# )
 
 plt.tight_layout()
 plt.savefig("scn_corrected_annotated.pdf", dpi=300, bbox_inches="tight")
 plt.show()
-
-# plt.figure(figsize=(8, 6))
-# ax = plt.gca()
-#
-# # 1. Standard FEM
-# plt.loglog(
-#     n,
-#     conditioning_fem,
-#     linestyle="--",
-#     linewidth=1.5,
-#     color="#0072BD",  # Matplotlib standard blue
-#     marker="o",
-#     markersize=7,
-#     markerfacecolor="none",  # Open marker
-#     markeredgewidth=1.5,
-#     label="FEM",
-# )
-# # Annotate FEM (arrows pointing slightly down and right)
-# annotate_local_slopes(n, conditioning_fem, ax, text_offset=(20, -20))
-#
-# # 2. Stable-Corrected XFEM
-# plt.loglog(
-#     n,
-#     conditioning,
-#     linestyle="-",
-#     linewidth=1.5,
-#     color="#D95319",  # Matplotlib standard orange/red
-#     marker="s",
-#     markersize=7,
-#     markerfacecolor="none",
-#     markeredgewidth=1.5,
-#     label="Stable-Corrected XFEM",
-# )
-# # Annotate SC-XFEM (arrows pointing slightly down and right)
-# annotate_local_slopes(n, conditioning, ax, text_offset=(20, -20))
-#
-# # 3. Standard XFEM (No Orthogonalization)
-# plt.loglog(
-#     n,
-#     conditioning_no_orth,
-#     linestyle="--",
-#     linewidth=1.5,
-#     color="#EDB120",  # Matplotlib standard yellow/orange
-#     marker="v",
-#     markersize=7,
-#     markerfacecolor="none",
-#     markeredgewidth=1.5,
-#     label="Standard XFEM (No Orth)",
-# )
-# # Annotate Standard XFEM (arrows pointing up and left to avoid crossing lines)
-# annotate_local_slopes(n, conditioning_no_orth, ax, text_offset=(-25, 25))
-#
-# # --- Formatting for Publication ---
-# plt.xlabel("n", fontsize=13)
-# plt.ylabel("scaled condition number", fontsize=13)
-#
-# # Add major and minor grids for log-scale readability
-# plt.grid(True, which="major", ls="-", color="lightgray", alpha=0.8)
-# plt.grid(True, which="minor", ls="--", color="lightgray", alpha=0.4)
-#
-# # Configure the legend to match the reference image
-# plt.legend(
-#     fontsize=11, loc="upper left", framealpha=1.0, edgecolor="black", fancybox=False
-# )
-#
-# # Optional: Ensure x-axis ticks show exactly the n_vals provided
-# plt.xticks(n, labels=[str(int(n)) for n in n])
-#
-# plt.tight_layout()
-# plt.savefig("scn_corrected_annotated.pdf", dpi=300, bbox_inches="tight")
-# plt.show()

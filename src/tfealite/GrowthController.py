@@ -54,37 +54,95 @@ class GrowthController:
         self.control_points_history = [self.control_points]
 
     def _crack_growth(self, model, bspline):
+        # 1. Primary Tip (s = 1)
         tip = bspline(1)
-        t_tip = bspline(1, nu=1)
-        t_unit = t_tip / np.linalg.norm(t_tip)
-        K_I, K_II = self.dcm.cal_sif(model.level_sets[0], model, model.cut_info, 1.0)
+
+        # Calculate SIFs and get the true local tip coordinate system
+        K_I, K_II, T_local = self.dcm.cal_sif(
+            model.level_sets[0], model, model.cut_info, 1.0
+        )
+
+        # Extract the true tangent vector from the level set gradients
+        # (Assuming T_local[0] is the t vector and T_local[1] is the n vector)
+        t_tip_true = T_local[0]
+        t_unit = t_tip_true / np.linalg.norm(t_tip_true)  # Normalize for safety
+
         self.K_I_tip_1.append(K_I)
         self.K_II_tip_1.append(K_II)
+
         theta = self.growth_direction_fn(K_I, K_II)
         print("K_I", K_I, "K_II", K_II)
         print("angle", np.degrees(theta))
+
+        # Rotate the TRUE tip tangent by the calculated MTS angle
         cos_t, sin_t = np.cos(theta), np.sin(theta)
         rotation_matrix = np.array([[cos_t, -sin_t], [sin_t, cos_t]])
         new_direction = rotation_matrix @ t_unit
+
         new_tip = tip + self.da * new_direction
         self.control_points.append(new_tip)
+
+        # 2. Embedded Tip (s = 0)
         if self.embedded:
             tip = model.level_sets[0].bspline(0)
-            t_tip = -model.level_sets[0].dbspline(0)
-            t_unit = t_tip / np.linalg.norm(t_tip)
-            K_I, K_II = self.dcm.cal_sif(
+
+            # Catch T_local here as well!
+            K_I, K_II, T_local = self.dcm.cal_sif(
                 model.level_sets[0], model, model.cut_info, 0.0
             )
+
+            # Use the true tangent for the second tip
+            # (Standard DCM definitions ensure T_local[0] points OUTWARD into uncracked material)
+            t_tip_true = T_local[0]
+            t_unit = t_tip_true / np.linalg.norm(t_tip_true)
+
             self.K_I_tip_2.append(K_I)
             self.K_II_tip_2.append(K_II)
+
             theta = -self.growth_direction_fn(K_I, K_II)
             cos_t, sin_t = np.cos(theta), np.sin(theta)
             rotation_matrix = np.array([[cos_t, -sin_t], [sin_t, cos_t]])
             new_direction = rotation_matrix @ t_unit
+
             new_tip = tip + self.da * new_direction
             self.control_points.insert(0, new_tip)
 
         self.control_points_history.append(list(self.control_points))
+
+    # def _crack_growth(self, model, bspline):
+    #     tip = bspline(1)
+    #     t_tip = bspline(1, nu=1)
+    #     t_unit = t_tip / np.linalg.norm(t_tip)
+    #     K_I, K_II, T_local = self.dcm.cal_sif(
+    #         model.level_sets[0], model, model.cut_info, 1.0
+    #     )
+    #     self.K_I_tip_1.append(K_I)
+    #     self.K_II_tip_1.append(K_II)
+    #     theta = self.growth_direction_fn(K_I, K_II)
+    #     print("K_I", K_I, "K_II", K_II)
+    #     print("angle", np.degrees(theta))
+    #     cos_t, sin_t = np.cos(theta), np.sin(theta)
+    #     rotation_matrix = np.array([[cos_t, -sin_t], [sin_t, cos_t]])
+    #     new_direction = rotation_matrix @ t_unit
+    #     new_tip = tip + self.da * new_direction
+    #     self.control_points.append(new_tip)
+    #     if self.embedded:
+    #         tip = model.level_sets[0].bspline(0)
+    #         t_tip = -model.level_sets[0].dbspline(0)
+    #         t_unit = t_tip / np.linalg.norm(t_tip)
+    #         K_I, K_II = self.dcm.cal_sif(
+    #             model.level_sets[0], model, model.cut_info, 0.0
+    #         )
+    #         self.K_I_tip_2.append(K_I)
+    #         self.K_II_tip_2.append(K_II)
+    #         theta = -self.growth_direction_fn(K_I, K_II)
+    #         cos_t, sin_t = np.cos(theta), np.sin(theta)
+    #         rotation_matrix = np.array([[cos_t, -sin_t], [sin_t, cos_t]])
+    #         new_direction = rotation_matrix @ t_unit
+    #         new_tip = tip + self.da * new_direction
+    #         self.control_points.insert(0, new_tip)
+    #
+    #     self.control_points_history.append(list(self.control_points))
 
     def save_results(self, output_prefix="crack_growth_results"):
         cp_filename = f"{output_prefix}_splines.csv"
@@ -133,7 +191,7 @@ class GrowthController:
             )
 
             model.insert_crack_spline(
-                bspline, embedded=self.embedded, h=self.h, snapping_tolerance=0.08
+                bspline, embedded=self.embedded, h=self.h, snapping_tolerance=0.15
             )
 
             model.gen_list_dof(dof_per_node=self.dof_per_node)

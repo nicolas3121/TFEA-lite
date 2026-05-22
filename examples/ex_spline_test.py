@@ -1,7 +1,6 @@
 import tfealite as tf
 import numpy as np
 from scipy.interpolate import splprep, BSpline
-from tfealite.core.level_set import CutType
 from tfealite.visualization.build_mesh import (
     my_build_Quad4n,
     build_XQuad4n,
@@ -21,41 +20,41 @@ model = tf.XFEModel(
     geometrical_range=0.15,
     corrected=True,
 )
-# pts = np.array([[0.0, 0.55], [0.2, 0.45], [0.3, 0.35], [0.72, 0.54]]).T
-pts = np.array([[0.22, 0.23], [0.3, 0.35], [0.72, 0.54]]).T
+pts = np.array([[0.0, 0.55], [0.2, 0.45], [0.3, 0.35], [0.72, 0.54]]).T
+# pts = np.array([[0.22, 0.23], [0.3, 0.35], [0.72, 0.54]]).T
 
 tck, u = splprep(pts, s=0, k=2)
 
 crack_spline = BSpline(tck[0], np.transpose(tck[1]), tck[2])
-model.insert_crack_spline(crack_spline, embedded=True)
+model.insert_crack_spline(crack_spline, embedded=False)
+print(model.level_sets[0].phi_t_list)
 # model.insert_crack_segment(p1, p2, embedded=False)
-print("here")
 # print(model.level_sets[0].phi_n)
 
 model.gen_list_dof(dof_per_node=tf.IS_2D)
-for elem, info in model.cut_info.items():
-    ls, cut_type, tip = info
-    if cut_type == CutType.PARTIAL or cut_type == CutType.CUT:
-        element = model.elements[elem - 1]
-        nodes = element[4]
-        phi_n, phi_t = model.level_sets[0].get(nodes, 1)
-        print(
-            "elem",
-            elem,
-            cut_type,
-            "phi_n",
-            np.array_repr(phi_n),
-            "phi_t",
-            np.array_repr(phi_t),
-        )
-        # print("phi_t", phi_t)
+# for elem, info in model.cut_info.items():
+#     ls, cut_type, tip = info
+#     if cut_type == CutType.PARTIAL or cut_type == CutType.CUT:
+#         element = model.elements[elem - 1]
+#         nodes = element[4]
+#         phi_n, phi_t = model.level_sets[0].get(nodes, 1)
+#         print(
+#             "elem",
+#             elem,
+#             cut_type,
+#             "phi_n",
+#             np.array_repr(phi_n),
+#             "phi_t",
+#             np.array_repr(phi_t),
+#         )
+#         # print("phi_t", phi_t)
 # print(model.cut_info)
-print(model.list_dof.list_dof)
+# print(model.list_dof.list_dof)
 # model.cut_info.pop(8)
 # node_numbers = model.list_dof.get_elem_dof_numbers(
 #     to_delete, mask=tf.DofType.HX | tf.DofType.HY
 # ).flatten()
-model.cal_global_matrices(tf.XQuad4n)
+model.cal_global_matrices({"Quad4n": tf.XQuad4n})
 
 
 def sel_condition(x, y, z):
@@ -103,16 +102,30 @@ model.solve_static()
 #     colorbar_title="s_yy",
 # )
 
-# model.Ug *= 0.001
-model.Ug = np.zeros(len(model.list_dof))
-mesh1 = my_build_Quad4n(model).cast_to_unstructured_grid()
-ghosts = np.argwhere(mesh1["is_cut"] > 0)
+# model.Ug *= 0.00005
+mult = 0.00005
+# model.Ug = np.zeros(len(model.list_dof))
+mesh1 = my_build_Quad4n(model, mult=mult).cast_to_unstructured_grid()
+ghosts = np.argwhere(mesh1["is_enriched"] > 0)
 mesh1.remove_cells(ghosts, inplace=True)
-mesh2 = build_XQuad4n(model)
+mesh2 = build_XQuad4n(model, mult=mult)
 blocks = pv.MultiBlock([mesh1, mesh2])
 # blocks.plot(show_edges=True, color="lightblue")
+vm_1 = mesh1.point_data["von_mises"]
+vm_2 = mesh2.point_data["von_mises"]
+all_vm = np.concatenate([vm_1, vm_2])
+v_max = np.percentile(all_vm, 98)
 pl = pv.Plotter()
-pl.add_mesh(blocks, color="lightblue", show_edges=True)
+# pl.add_mesh(blocks, color="lightblue", show_edges=True)
+pl.add_mesh(
+    blocks,
+    color="lightblue",
+    # scalars="von_mises",  # The exact string key in your point_data dict
+    # cmap="turbo",  # A great colormap for stress fields (or use "jet", "viridis")
+    show_edges=True,  # Shows the mesh grid (including your sub-triangulations!)
+    clim=[0, v_max],
+    scalar_bar_args={"title": "Von Mises Stress"},
+)
 u_new = np.linspace(0, 1, 1000)
 spline_pts_2d = crack_spline(u_new)  # Output shape is (100, 2)
 z_coords = np.zeros((spline_pts_2d.shape[0], 1))

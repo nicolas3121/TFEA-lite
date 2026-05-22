@@ -197,6 +197,7 @@ def partial_cut_embedding_tetr_iter(Nc, tip, tip_on_interface, range_iter=range(
 
 def cut_embedding_tri_iter(Nc, range=range(4)):
     ZERO_TOL = 1e-10
+    sum = 0
     for i in range:
         if i != 3:
             Ni = np.eye(3)
@@ -205,21 +206,32 @@ def cut_embedding_tri_iter(Nc, range=range(4)):
         else:
             Ni = Nc.copy()
         detJi = np.linalg.det(Ni)
+        if detJi < 0:
+            print("detJi negative", detJi)
         if not np.abs(detJi) < ZERO_TOL:
+            sum += detJi
+            # print(detJi)
             yield Ni, detJi
+    print("full cut", sum)
 
 
 def partial_cut_embedding_tri_iter(Nc, tip, range):
     ZERO_TOL = 1e-10
     Ni_template = np.zeros((3, 3))
     Ni_template[:, 0] = tip
+    sum = 0
     for i in range:
         Ni = Ni_template.copy()
         Ni[int((i % 5 + 1) / 2), 1 + i % 2] = 1
         Ni[:, 2 - i % 2] = Nc[:, int(i / 2)]
         detJi = np.linalg.det(Ni)
+        if detJi < 0:
+            print("detJi negative", detJi)
         if not np.abs(detJi) < ZERO_TOL:
+            sum += detJi
+            # print(detJi)
             yield Ni, detJi
+    print("partial cut", sum)
 
 
 def jump_shape_functions(elem, shape_fn, pu_fn, nat_coords, tip_coords):

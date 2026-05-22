@@ -12,6 +12,8 @@ from ..elements.utils import (
 from ..elements.XQuad4n import XQuad4n
 from ..elements.Quad4n import Quad4n
 from ..elements.XTetr4n import XTetr4n
+from ..elements.XTri3n import XTri3n
+from ..elements.Tri3n import Tri3n
 from ..elements.Tetr4n import Tetr4n
 from ..core.level_set import CutType
 
@@ -27,6 +29,105 @@ DOF_TYPES = np.array(
 def _id_to_index(nodes):
     nodes = np.asarray(nodes)
     return {int(nid): i for i, nid in enumerate(nodes[:, 0].astype(int))}
+
+
+def my_build_mixed_mesh(model, mult=1.0):
+    nodes = np.asarray(model.nodes)
+    num_nodes = nodes.shape[0]
+    num_elems = len(model.elements)
+
+    points_ref = nodes[:, 1:4]
+
+    # Use lists to dynamically build the mixed cells array and cell types
+    cells_list = []
+    cell_types = []
+
+    cell_eids = np.empty(num_elems, dtype=int)
+    cell_dofs_per_node = np.empty(num_elems, dtype=int)
+    is_enriched = np.zeros(num_elems, dtype=bool)
+
+    displacements = np.zeros_like(points_ref)
+    base_dofs = model.list_dof.get_elem_dof_numbers_flat(
+        1 + np.arange(num_nodes), BASE_DOFS
+    )
+    displacements[:, :2] = model.Ug[base_dofs].reshape((-1, 2))
+
+    node_stress = np.zeros((num_nodes, 3))
+    node_counts = np.zeros(num_nodes, dtype=int)
+
+    for i, element in enumerate(model.elements):
+        # Unpack the element (assuming the 2nd item is the element type string)
+        eid, etype, mat_id, real_id, elem_nodes = element
+        elem_nodes_idx = np.asarray(elem_nodes) - 1
+
+        # 1. Build PyVista connectivity array format: [N, node1, node2, ..., nodeN]
+        n_nodes = len(elem_nodes_idx)
+        cells_list.extend([n_nodes, *elem_nodes_idx])
+
+        # 2. Assign the correct PyVista CellType
+        if etype == "Quad4n" or n_nodes == 4:
+            cell_types.append(CellType.QUAD)
+        elif etype == "Tri3n" or n_nodes == 3:
+            cell_types.append(CellType.TRIANGLE)
+        else:
+            raise ValueError(f"Unknown element type '{etype}' for element {eid}.")
+
+        # Store general element info
+        cell_eids[i] = eid
+        elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
+        cell_dofs_per_node[i] = np.bitwise_or.reduce(elem_dofs)
+
+        if eid in model.cut_info:
+            is_enriched[i] = True
+
+        # 3. Conditionally evaluate stresses based on element type
+        if not is_enriched[i]:
+            elem_vertices = points_ref[elem_nodes_idx, :2]
+            material = model.materials[mat_id - 1][1]
+            real = model.reals[real_id - 1][1]
+
+            # Instantiate the correct element class
+            if cell_types[-1] == CellType.QUAD:
+                elem = Quad4n(elem_vertices, material, real)
+            else:
+                elem = Tri3n(elem_vertices, material, real)
+
+            Ue = displacements[elem_nodes_idx, :2].flatten()
+            sig_nodes = elem.stresses_at_nodes(Ue)
+
+            node_stress[elem_nodes_idx] += sig_nodes
+            node_counts[elem_nodes_idx] += 1
+
+    # Average nodal stresses
+    valid_nodes = node_counts > 0
+    node_stress[valid_nodes] /= node_counts[valid_nodes, None]
+
+    # Convert dynamically built lists to numpy arrays
+    points = points_ref + mult * displacements
+    cells_array = np.array(cells_list)
+    cell_types_array = np.array(cell_types, dtype=np.uint8)
+
+    # 4. Generate an UnstructuredGrid instead of PolyData
+    mesh = pv.UnstructuredGrid(cells_array, cell_types_array, points)
+
+    # Bind Point Data
+    mesh.point_data["points_ref"] = points_ref
+    mesh.point_data["displacement"] = displacements
+
+    s_xx, s_yy, t_xy = node_stress[:, 0], node_stress[:, 1], node_stress[:, 2]
+    von_mises = np.sqrt(s_xx**2 - s_xx * s_yy + s_yy**2 + 3 * t_xy**2)
+
+    mesh.point_data["s_xx"] = s_xx
+    mesh.point_data["s_yy"] = s_yy
+    mesh.point_data["t_xy"] = t_xy
+    mesh.point_data["von_mises"] = von_mises
+
+    # Bind Cell Data
+    mesh.cell_data["eid"] = cell_eids
+    mesh.cell_data["dofs_per_node"] = cell_dofs_per_node
+    mesh.cell_data["is_enriched"] = is_enriched
+
+    return mesh
 
 
 def build_XQuad4n(model, mult=1.0):
@@ -92,7 +193,9 @@ def build_XQuad4n(model, mult=1.0):
 
     for elem_id, (_, cut_type, _) in cut_info.items():
         element = model.elements[elem_id - 1]
-        _, _, mat_id, real_id, elem_nodes = element
+        _, elem_type, mat_id, real_id, elem_nodes = element
+        if elem_type != "Quad4n":
+            continue
         elem_nodes = np.asarray(elem_nodes)
 
         elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
@@ -616,8 +719,197 @@ def build_Tri3n(nodes, elements, node_stress=None):
     return mesh
 
 
-def build_XTri3n(nodes, elements, cut_info, level_sets, node_stress=None):
-    nodes = np.asarray(nodes)
+def build_XTri3n(model, mult=1.0):
+    cut_info = model.cut_info
+
+    point_offset = [0]
+
+    def build_triangles(
+        tri_iterator,
+        Ue,
+        nat_x_e,
+        elem_vertices,
+        phi_t,
+        elem,
+        points_ref,
+        faces,
+        displacements,
+        stresses,
+    ):
+        for Ni, _ in tri_iterator:
+            # Shrink sub-triangles very slightly to prevent rendering artifacts
+            centroid = np.mean(Ni, axis=1, keepdims=True)
+            Ni = centroid + (Ni - centroid) * 0.999
+
+            sub_nat_x_e = Ni.T @ nat_x_e
+            sub_shape_funcs = elem.shape_functions(sub_nat_x_e.T)[0]
+
+            # Slice [:3] instead of [:4] for Tri3n base nodes
+            sub_phi_t = np.sum(sub_shape_funcs[:, :3] * phi_t[None, :], axis=1)
+
+            sub_vertices = sub_shape_funcs[:, :3] @ elem_vertices
+            node_disps = sub_shape_funcs @ Ue
+
+            # Apply enrichment jump for nodes strictly in front of the crack tip
+            in_front = np.where((sub_phi_t > 0) & ~np.isclose(sub_phi_t, 0, atol=1e-4))[
+                0
+            ]
+            if len(in_front) > 0:
+                node_disps[in_front, :] = sub_shape_funcs[in_front, :3] @ Ue[:3, :]
+
+            n_points = point_offset[0]
+            faces.extend([3, n_points, n_points + 1, n_points + 2])
+            point_offset[0] += 3
+
+            points_ref.append(sub_vertices)
+            displacements.append(node_disps)
+
+            stresses.append(elem.cal_stresses(sub_nat_x_e.T, Ue))
+
+    def build_single_triangle(
+        Ue, elem_vertices, elem, points_ref, faces, displacements, stresses
+    ):
+        sub_vertices = elem_vertices
+
+        # Tri3n only has 3 base node displacements
+        node_disps = Ue[:3, :]
+
+        n_points = point_offset[0]
+        faces.extend([3, n_points, n_points + 1, n_points + 2])
+        point_offset[0] += 3
+
+        points_ref.append(sub_vertices)
+        displacements.append(node_disps)
+
+        # Standard natural coordinates for a 3-node triangle: (0,0), (1,0), (0,1)
+        nat_x_e = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+        stresses.append(elem.cal_stresses(nat_x_e.T, Ue))
+
+    points_ref, faces, displacements, node_stress = [], [], [], []
+
+    for elem_id, (_, cut_type, _) in cut_info.items():
+        element = model.elements[elem_id - 1]
+        _, elem_type, mat_id, real_id, elem_nodes = element
+
+        # Filter for Tri3n
+        if elem_type != "Tri3n":
+            continue
+
+        elem_nodes = np.asarray(elem_nodes)
+
+        elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
+        local_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
+        h_enrich = bool(local_dofs_per_node & HEAVISIDE_DOFS)
+        t_enrich = bool(local_dofs_per_node & BRANCH_DOFS)
+        partial_cut = cut_type == CutType.PARTIAL
+
+        most_enriched_idx = np.argmax(
+            np.bitwise_and(elem_dofs, BRANCH_DOFS | HEAVISIDE_DOFS) != 0
+        )
+        most_enriched_node = elem_nodes[most_enriched_idx]
+
+        ls = model.ls[most_enriched_node - 1]
+        tip = 0
+
+        if t_enrich:
+            tip = model.tip[
+                elem_nodes[np.argmax(np.bitwise_and(elem_dofs, BRANCH_DOFS) != 0)] - 1
+            ]
+
+        phi_n, phi_t = model.level_sets[ls].get(elem_nodes, tip)
+
+        elem_vertices = model.nodes[elem_nodes - 1, 1:3]
+        material = model.materials[mat_id - 1][1]
+        real = model.reals[real_id - 1][1]
+
+        if model.corrected:
+            in_range = model.in_range[elem_nodes - 1]
+        else:
+            in_range = np.ones(len(elem_nodes))
+
+        Ue = fill_element_displacement(elem_nodes, model.list_dof, model.Ug).reshape(
+            (-1, 2)
+        )
+
+        elem = XTri3n(
+            elem_vertices,
+            material,
+            real,
+            phi_n,
+            phi_t,
+            h_enrich,
+            t_enrich,
+            partial_cut,
+            in_range,
+        )
+
+        if cut_type == CutType.NONE:
+            build_single_triangle(
+                Ue, elem_vertices, elem, points_ref, faces, displacements, node_stress
+            )
+        else:
+            # A native triangle only yields one set of intersections
+            Nc = elem._cal_intersections()
+
+            if partial_cut:
+                xi_tip, eta_tip = elem._cal_tip_nat_coords()
+                tip = np.linalg.solve(
+                    np.array([elem.phi_t, elem.phi_n, [1, 1, 1]]), np.array([0, 0, 1])
+                )
+
+                sub_tris = partial_cut_embedding_tri_iter(Nc, tip, range(6))
+            else:
+                sub_tris = cut_embedding_tri_iter(Nc)
+
+            # Base natural coordinates for the triangle mapping
+            nat_x_e = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+
+            # Only one call to build_triangles is needed
+            build_triangles(
+                sub_tris,
+                Ue,
+                nat_x_e,
+                elem_vertices,
+                phi_t,
+                elem,
+                points_ref,
+                faces,
+                displacements,
+                node_stress,
+            )
+
+    points_ref = np.vstack(points_ref) if points_ref else np.empty((0, 2))
+    displacements = np.vstack(displacements) if displacements else np.empty((0, 2))
+
+    points_ref = np.hstack((points_ref, np.zeros((points_ref.shape[0], 1))))
+    displacements = np.hstack((displacements, np.zeros((displacements.shape[0], 1))))
+
+    points = points_ref + mult * displacements
+
+    # --- FIX: Transition to UnstructuredGrid to bypass the PyVista PolyData strictness ---
+    faces_array = np.array(faces, dtype=int)
+
+    # Each triangle entry is length 4 (1 for the count '3', plus 3 node indices)
+    num_cells = len(faces_array) // 4
+
+    cell_types = np.full(num_cells, pv.CellType.TRIANGLE, dtype=np.uint8)
+    mesh = pv.UnstructuredGrid(faces_array, cell_types, points)
+    # -------------------------------------------------------------------------------------
+
+    mesh.point_data["points_ref"] = points_ref
+    mesh.point_data["displacement"] = displacements
+
+    node_stress = np.vstack(node_stress) if node_stress else np.empty((0, 3))
+
+    if node_stress.shape[0] > 0:
+        s_xx, s_yy, t_xy = node_stress[:, 0], node_stress[:, 1], node_stress[:, 2]
+        von_mises = np.sqrt(s_xx**2 - s_xx * s_yy + s_yy**2 + 3 * t_xy**2)
+        mesh.point_data["s_xx"] = s_xx
+        mesh.point_data["s_yy"] = s_yy
+        mesh.point_data["t_xy"] = t_xy
+        mesh.point_data["von_mises"] = von_mises
+
+    return mesh
 
 
 def build_mesh(nodes, elements):

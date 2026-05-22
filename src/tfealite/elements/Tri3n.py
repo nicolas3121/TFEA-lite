@@ -57,25 +57,19 @@ class Tri3n:
         dN_dxi = np.array([[-1.0, 1.0, 0.0], [-1.0, 0.0, 1.0]])
         return N, dN_dxi[None, :, :]
 
+    def cal_stresses(self, nat_coords, Ue):
+        Ue = np.asarray(Ue, dtype=float).ravel()
+        _, dN_dxi = self.shape_functions(nat_coords)
+        J = dN_dxi @ self.node_coords
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+        B = cal_B_2d_vec(dN_dxy)
+        eps = B @ Ue
+        sig = self.C @ eps[:, :, None]
+        return sig.reshape(-1, 3)
+
     def stresses_at_nodes(self, Ue):
         Ue = np.asanyarray(Ue, dtype=float).ravel()
         # same at all points in triangle
-        xi, eta = 1 / 3, 1 / 3
-        nat_coords = np.array([[xi], [eta]])
+        nat_coords = np.array([[0, 1, 0], [0, 0, 1]])
 
-        x_e = self.node_coords
-
-        _, dN_dxi = self.shape_functions(nat_coords)
-        J = dN_dxi @ x_e
-
-        B = np.zeros((3, 6))
-        dN_dxy = np.linalg.solve(J, dN_dxi)
-        B[0, ::DOFS] = dN_dxy[0, :]
-        B[1, 1::DOFS] = dN_dxy[1, :]
-        B[2, ::DOFS] = dN_dxy[1, :]
-        B[2, 1::DOFS] = dN_dxy[0, :]
-
-        eps = B @ Ue
-        sig = self.C @ eps
-
-        return np.tile(sig, (3, 1))
+        return self.cal_stresses(nat_coords, Ue)

@@ -1,16 +1,13 @@
 import matplotlib.pyplot as plt
-from geomdl import knotvector
-from scipy.interpolate import BSpline
 import numpy as np
 import sympy as sp
 from scipy.sparse.linalg import spsolve
 import scipy.sparse as sps
-
-import pyvista as pv
 from tfealite.visualization.build_mesh import (
     my_build_Quad4n,
     build_XQuad4n,
 )
+import pyvista as pv
 
 import tfealite as tf
 import tfealite.core.quadratures as qd
@@ -53,38 +50,25 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False, color="
         )
 
 
-def get_analytical_displacements(
-    nu=0.30, plane_strain=True, xc=5.0, yc=5.0, crack_angle=0.0
-):
+def get_analytical_displacements(nu=0.30, plane_strain=True, xc=5.0, yc=5.0):
     kappa = 3.0 - 4.0 * nu if plane_strain else (3.0 - nu) / (1.0 + nu)
-    c, s = np.cos(crack_angle), np.sin(crack_angle)
 
     def eval_displacements(x, y):
-        dx, dy = x - xc, y - yc
-
-        # Rotate global points into local crack tip coordinate system
-        x_loc = c * dx + s * dy
-        y_loc = -s * dx + c * dy
-
-        r = np.sqrt(x_loc**2 + y_loc**2)
-        theta = np.arctan2(y_loc, x_loc)
-
-        u_x_loc = np.sqrt(r) * (
+        x_rel, y_rel = x - xc, y - yc
+        r = np.sqrt(x_rel**2 + y_rel**2)
+        theta = np.arctan2(y_rel, x_rel)
+        u_x = np.sqrt(r) * (
             (kappa - 0.5) * np.cos(theta / 2) - 0.5 * np.cos(3 * theta / 2)
         )
-        u_y_loc = np.sqrt(r) * (
+        u_y = np.sqrt(r) * (
             (kappa + 0.5) * np.sin(theta / 2) - 0.5 * np.sin(3 * theta / 2)
         )
-
-        # Rotate displacements back to global system
-        u_x = c * u_x_loc - s * u_y_loc
-        u_y = s * u_x_loc + c * u_y_loc
         return u_x, u_y
 
     return eval_displacements
 
 
-def derive_analytical_fields(xc_val=5.0, yc_val=5.0, crack_angle=0.0):
+def derive_analytical_fields(xc_val=5.0, yc_val=5.0):
     x, y = sp.symbols("x y", real=True)
 
     E = 1.0
@@ -94,25 +78,12 @@ def derive_analytical_fields(xc_val=5.0, yc_val=5.0, crack_angle=0.0):
     mu = E / (2.0 * (1.0 + nu))
     lmbda = (E * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
 
-    dx, dy = x - xc_val, y - yc_val
-    c, s = sp.cos(crack_angle), sp.sin(crack_angle)
+    xc, yc = x - xc_val, y - yc_val
+    r = sp.sqrt(xc**2 + yc**2)
+    theta = sp.atan2(yc, xc)
 
-    # Local coordinates mapped from global
-    x_loc = c * dx + s * dy
-    y_loc = -s * dx + c * dy
-
-    r = sp.sqrt(x_loc**2 + y_loc**2)
-    theta = sp.atan2(y_loc, x_loc)
-
-    u_x_loc = sp.sqrt(r) * (
-        (kappa - 0.5) * sp.cos(theta / 2) - 0.5 * sp.cos(3 * theta / 2)
-    )
-    u_y_loc = sp.sqrt(r) * (
-        (kappa + 0.5) * sp.sin(theta / 2) - 0.5 * sp.sin(3 * theta / 2)
-    )
-
-    u_x = c * u_x_loc - s * u_y_loc
-    u_y = s * u_x_loc + c * u_y_loc
+    u_x = sp.sqrt(r) * ((kappa - 0.5) * sp.cos(theta / 2) - 0.5 * sp.cos(3 * theta / 2))
+    u_y = sp.sqrt(r) * ((kappa + 0.5) * sp.sin(theta / 2) - 0.5 * sp.sin(3 * theta / 2))
 
     eps_xx = sp.diff(u_x, x)
     eps_yy = sp.diff(u_y, y)
@@ -128,115 +99,6 @@ def derive_analytical_fields(xc_val=5.0, yc_val=5.0, crack_angle=0.0):
     return get_strain, get_stress
 
 
-# ==============================================================================
-# TRIANGLE ELEMENT ENERGY NORM INTEGRATION (From Snippet 2)
-# ==============================================================================
-def calculate_element_energy_norm_tri(element, Ue, get_exact_strain, get_exact_stress):
-    exact_energy_sq = 0.0
-    error_energy_sq = 0.0
-    N_FN = 3
-
-    def accumulate_error(nat_coords, w_eff, sign=None):
-        nonlocal exact_energy_sq, error_energy_sq
-
-        N, dN_dxi = element.shape_functions(nat_coords)
-        x_gp = N[:, :N_FN] @ element.node_coords
-
-        J = dN_dxi[:, :, :N_FN] @ element.node_coords
-        dN_dxy = np.linalg.solve(J, dN_dxi)
-        B = cal_B_2d_vec(dN_dxy)
-
-        eps_h = np.einsum("gij,j->gi", B, Ue)
-        sig_h = np.einsum("ij,gj->gi", element.C, eps_h)
-
-        eps_ex = np.column_stack(get_exact_strain(x_gp[:, 0], x_gp[:, 1]))
-        sig_ex = np.column_stack(get_exact_stress(x_gp[:, 0], x_gp[:, 1]))
-
-        diff_eps = eps_ex - eps_h
-        diff_sig = sig_ex - sig_h
-
-        ex_energy_density = np.sum(sig_ex * eps_ex, axis=1)
-        err_energy_density = np.sum(diff_sig * diff_eps, axis=1)
-
-        exact_energy_sq += np.sum(ex_energy_density * w_eff)
-        error_energy_sq += np.sum(err_energy_density * w_eff)
-
-    if not getattr(element, "h_enrich", False) and not getattr(
-        element, "partial_cut", False
-    ):
-        rule, correction = qd.TRI_RULES[19]
-        nat_coords = rule[:, :2].T
-
-        _, dN_dxi = element.shape_functions(nat_coords)
-        J = dN_dxi[:, :, :N_FN] @ element.node_coords
-        detJ = np.linalg.det(J)
-        w_eff = rule[:, 2] * correction * detJ
-
-        accumulate_error(nat_coords, w_eff)
-
-    elif getattr(element, "h_enrich", False):
-        Nc1 = element._cal_intersections()
-        rule, correction = qd.TRI_RULES[19] if element.t_enrich else qd.TRI_RULES[19]
-
-        def integrate_sub_tri_error(Nc, nat_x_e):
-            for Ni, detJi in cut_embedding_tri_iter(Nc):
-                xi, eta, w = rule[:, 0], rule[:, 1], rule[:, 2]
-                nat_sub_x_e = nat_x_e.T @ Ni
-
-                sign = None
-
-                n = np.array([1 - xi - eta, xi, eta])
-                nat_coords_sub = nat_sub_x_e @ n
-
-                _, dN_dxi_sub = element.shape_functions(nat_coords_sub)
-                J = dN_dxi_sub[:, :, :N_FN] @ element.node_coords
-                detJ = np.linalg.det(J)
-
-                w_eff = w * correction * detJ * detJi
-                accumulate_error(nat_coords_sub, w_eff, sign=sign)
-
-        integrate_sub_tri_error(Nc1, element.NAT_COORDS)
-
-    elif getattr(element, "partial_cut", False):
-        Nc1 = element._cal_intersections()
-        rule, correction = qd.QUAD_RULES[20]
-        rule = rule.copy()
-        rule[:, 0:2] = (1 + rule[:, 0:2]) / 2
-        rule[:, 2] /= 4
-
-        tip = np.linalg.solve(
-            np.array([element.phi_t, element.phi_n, [1, 1, 1]]), np.array([0, 0, 1])
-        )
-
-        def integrate_partial_cut_error(tip, Nc, rng, nat_x_e):
-            for Ni, detJi in partial_cut_embedding_tri_iter(Nc, tip, rng):
-                nat_sub_x_e = nat_x_e.T @ Ni
-                x_e_i = (
-                    element._base_shape_functions(nat_sub_x_e)[0] @ element.node_coords
-                )
-
-                duffy = DuffyDistance(x_e_i)
-                u, v = rule[:, 0], rule[:, 1]
-                xi_d_2, eta_d_2, w_d_2 = duffy.transform(u, v, beta=2)
-
-                N_map = np.array([1.0 - xi_d_2 - eta_d_2, xi_d_2, eta_d_2])
-                nat_coords_sub = nat_sub_x_e @ N_map
-
-                _, dN_dxi_sub = element.shape_functions(nat_coords_sub)
-                J = dN_dxi_sub[:, :, :N_FN] @ element.node_coords
-                detJ = np.linalg.det(J)
-
-                w_eff = rule[:, 2] * correction * w_d_2 * detJ * detJi
-                accumulate_error(nat_coords_sub, w_eff, sign=None)
-
-        integrate_partial_cut_error(tip, Nc1, range(6), element.NAT_COORDS)
-
-    return exact_energy_sq, error_energy_sq
-
-
-# ==============================================================================
-# QUAD ELEMENT ENERGY NORM INTEGRATION (From Snippet 1)
-# ==============================================================================
 def calculate_element_energy_norm(element, Ue, get_exact_strain, get_exact_stress):
     exact_energy_sq = 0.0
     error_energy_sq = 0.0
@@ -293,7 +155,6 @@ def calculate_element_energy_norm(element, Ue, get_exact_strain, get_exact_stres
                 nat_sub_x_e = nat_x_e.T @ Ni
 
                 sign = None
-
                 n = np.array([1 - xi - eta, xi, eta])
                 nat_coords_sub = nat_sub_x_e @ n
 
@@ -357,14 +218,11 @@ def test_pure_mode_1_analytical_benchmark(
     corrected,
     gen=tf.gen_rect_Quad4n,
     error_fn=calculate_element_energy_norm,
-    geometrical_range=1.0,
-    crack_angle=0.0,
-    plot=False,
+    geometrical_range=1.2,
 ):
     E_mod = 1.0
     nu = 0.3
 
-    # --- CONVERT TO EFFECTIVE PLANE STRAIN PROPERTIES ---
     E_eff = E_mod / (1.0 - nu**2)
     nu_eff = nu / (1.0 - nu)
 
@@ -383,138 +241,160 @@ def test_pure_mode_1_analytical_benchmark(
         corrected=corrected,
     )
 
-    # Dynamic starting point based on crack_angle to ensure it goes through diagonals.
-    L_crack = 10.0
-    tip_x, tip_y = 5.0, 5.0
-    p1 = np.array(
-        [tip_x - L_crack * np.cos(crack_angle), tip_y - L_crack * np.sin(crack_angle)]
-    )
-    p2 = np.array([tip_x, tip_y])
-
-    control_points = np.linspace(p1, p2, 12).tolist()
-    n = len(control_points)
-    k = 2
-    knots = knotvector.generate(k, n)
-    bspline = BSpline(knots, np.array(control_points), k)
-
-    model.insert_crack_spline(
-        bspline, embedded=False, h=10 / x_elem, snapping_tolerance=0.5
-    )
+    p1 = np.array([0.0, 5])
+    p2 = np.array([5, 5])
+    model.insert_crack_segment(p1, p2, embedded=False)
 
     model.gen_list_dof(dof_per_node=tf.IS_2D)
     elem_dict = {"Quad4n": tf.XQuad4n, "Tri3n": tf.XTri3n}
     model.cal_global_matrices(elem_dict, eval_mass=False)
 
-    calc_disp = get_analytical_displacements(
-        nu=nu, plane_strain=True, xc=tip_x, yc=tip_y, crack_angle=crack_angle
-    )
+    # ---------------------------------------------------------
+    # NEW BOUNDARY CONDITIONS: Apply exact surface tractions
+    # ---------------------------------------------------------
+    _, get_exact_stress = derive_analytical_fields()
 
-    tol = 1e-8
-    x_coords = model.nodes[:, 1]
-    y_coords = model.nodes[:, 2]
+    # Define boundary identifiers
+    def sel_right(x, y, z=0):
+        return x - 10.0
 
-    is_boundary = (
-        (np.abs(x_coords - 0.0) < tol)
-        | (np.abs(x_coords - 10.0) < tol)
-        | (np.abs(y_coords - 0.0) < tol)
-        | (np.abs(y_coords - 10.0) < tol)
-    )
-    boundary_node_ids = np.where(is_boundary)[0] + 1
+    def sel_top(x, y, z=0):
+        return y - 10.0
 
+    def sel_left(x, y, z=0):
+        return x - 0.0
+
+    def sel_bot(x, y, z=0):
+        return y - 0.0
+
+    # Define boundary tractions using analytical stress (t = sigma * n)
+    def trac_right(x, y, z=0):
+        sig_xx, sig_yy, sig_xy = get_exact_stress(x, y)
+        return sig_xx, sig_xy, np.zeros_like(x)  # Normal [1, 0]
+
+    def trac_top(x, y, z=0):
+        sig_xx, sig_yy, sig_xy = get_exact_stress(x, y)
+        return sig_xy, sig_yy, np.zeros_like(x)  # Normal [0, 1]
+
+    def trac_left(x, y, z=0):
+        sig_xx, sig_yy, sig_xy = get_exact_stress(x, y)
+        return -sig_xx, -sig_xy, np.zeros_like(x)  # Normal [-1, 0]
+
+    def trac_bot(x, y, z=0):
+        sig_xx, sig_yy, sig_xy = get_exact_stress(x, y)
+        return -sig_xy, -sig_yy, np.zeros_like(x)  # Normal [0, -1]
+
+    # Apply forces. First integration resets the global vector, subsequent ones append.
+    model.gen_surface_tractions(sel_right, trac_right, tf.Quad4n, 2, reset=True)
+    model.gen_surface_tractions(sel_top, trac_top, tf.Quad4n, 2, reset=False)
+    model.gen_surface_tractions(sel_left, trac_left, tf.Quad4n, 2, reset=False)
+    model.gen_surface_tractions(sel_bot, trac_bot, tf.Quad4n, 2, reset=False)
+
+    # Retrieve the dynamically populated force vector
+    F_ext = model.Fg.copy()
+
+    # ---------------------------------------------------------
+    # MINIMAL DIRICHLET CONDITIONS: Prevent Rigid Body Motion
+    # ---------------------------------------------------------
+    calc_disp = get_analytical_displacements(nu=nu, plane_strain=True)
     U_dir = np.zeros(model.Kg.shape[0])
     fix_dofs = []
 
-    boundary_x_val = model.nodes[boundary_node_ids - 1, 1]
-    boundary_y_val = model.nodes[boundary_node_ids - 1, 2]
+    # Pin the model by locking minimal DOFs to the analytical displacement.
+    # Find nodes nearest to the bottom-left and bottom-right corners
+    x_coords = model.nodes[:, 1]
+    y_coords = model.nodes[:, 2]
 
-    u_x_exact, u_y_exact = calc_disp(boundary_x_val, boundary_y_val)
+    dist_to_bl = x_coords**2 + y_coords**2
+    dist_to_br = (x_coords - 10.0) ** 2 + y_coords**2
 
-    dof_x = model.list_dof.get_elem_dof_numbers(boundary_node_ids, DofType.UX).ravel()
-    dof_y = model.list_dof.get_elem_dof_numbers(boundary_node_ids, DofType.UY).ravel()
+    bl_idx = np.argmin(dist_to_bl) + 1  # 1-based node index
+    br_idx = np.argmin(dist_to_br) + 1
 
-    U_dir[dof_x] = u_x_exact
-    U_dir[dof_y] = u_y_exact
-    fix_dofs.extend(dof_x)
-    fix_dofs.extend(dof_y)
+    # 1. Fix Bottom-Left corner in X and Y
+    bx, by = model.nodes[bl_idx - 1, 1], model.nodes[bl_idx - 1, 2]
+    ux, uy = calc_disp(bx, by)
+    dof_x_bl = model.list_dof.get_elem_dof_numbers([bl_idx], DofType.UX).ravel()
+    dof_y_bl = model.list_dof.get_elem_dof_numbers([bl_idx], DofType.UY).ravel()
+
+    U_dir[dof_x_bl] = ux
+    U_dir[dof_y_bl] = uy
+    fix_dofs.extend(dof_x_bl)
+    fix_dofs.extend(dof_y_bl)
+
+    # 2. Fix Bottom-Right corner in Y (prevents rigid rotation)
+    bx, by = model.nodes[br_idx - 1, 1], model.nodes[br_idx - 1, 2]
+    _, uy = calc_disp(bx, by)
+    dof_y_br = model.list_dof.get_elem_dof_numbers([br_idx], DofType.UY).ravel()
+
+    U_dir[dof_y_br] = uy
+    fix_dofs.extend(dof_y_br)
 
     fix_dofs = np.array(sorted(set(fix_dofs)), dtype=int)
     model.gen_P(fix_dofs)
 
-    F_ext = np.zeros(model.Kg.shape[0])
-
+    # ---------------------------------------------------------
+    # ALGEBRAIC SOLVER
+    # ---------------------------------------------------------
     F_physical_reduced = F_ext - model.Kg @ U_dir
+
     K_ortho = model.ortho_T.T @ model.Kg @ model.ortho_T
     K_ortho = (K_ortho + K_ortho.T) / 2
     F_ortho_reduced = model.ortho_T.T @ F_physical_reduced
-
-    if plot:
-        print("   - K_ortho evaluated.")
+    print("   - K_ortho evaluated.")
 
     K_reduced = model.P.T @ K_ortho @ model.P
     F_final = model.P.T @ F_ortho_reduced
-
-    if plot:
-        print("   - K_reduced (Lifting) evaluated.")
+    print("   - K_reduced (Lifting) evaluated.")
 
     D = K_reduced.diagonal()
     D_inv_sqrt = sps.diags(1.0 / np.sqrt(D))
 
     Kg_scaled = D_inv_sqrt @ K_reduced @ D_inv_sqrt
     Fg_scaled = D_inv_sqrt @ F_final
-    # print("   - Diagonal scaling applied.")
-    # print("   - Start solving for U = inv(K)F ...")
-    # K_dense = Kg_scaled.toarray()
-    # singular_values = svdvals(K_dense)
-    # # Look at the smallest 5 singular values
-    # print("singular_values")
-    # print(singular_values[-5:])
+    print("   - Diagonal scaling applied.")
 
-    if plot:
-        print("   - Diagonal scaling applied.")
-    if plot:
-        print("   - Start solving for U = inv(K)F ...")
-
+    print("   - Start solving for U = inv(K)F ...")
     Ug_scaled = spsolve(Kg_scaled, Fg_scaled)
 
     Ug_reduced = D_inv_sqrt @ Ug_scaled
     Ug_tilde = model.P @ Ug_reduced + U_dir
     model.Ug = model.ortho_T @ Ug_tilde
 
-    # ---------------------------------------------------------
-    # RESTORED PYVISTA PLOTTING BLOCK
-    # ---------------------------------------------------------
-    if plot:
-        mesh1 = my_build_Quad4n(model, mult=0.1).cast_to_unstructured_grid()
-        ghosts = np.argwhere(mesh1["is_enriched"] > 0)
-        mesh1.remove_cells(ghosts, inplace=True)
+    mesh1 = my_build_Quad4n(model, mult=0.0).cast_to_unstructured_grid()
+    ghosts = np.argwhere(mesh1["is_enriched"] > 0)
+    mesh1.remove_cells(ghosts, inplace=True)
 
-        mesh2 = build_XQuad4n(model, mult=0.1)
+    mesh2 = build_XQuad4n(model, mult=0.0)
+    # mesh2 = clean_and_average(mesh2, 4)
 
-        blocks = pv.MultiBlock([mesh1, mesh2])
-        pl = pv.Plotter()
+    blocks = pv.MultiBlock([mesh1, mesh2])
 
-        vm_1 = mesh1.point_data.get("von_mises", np.zeros(mesh1.n_points))
-        vm_2 = mesh2.point_data.get("von_mises", np.zeros(mesh2.n_points))
-        all_vm = np.concatenate([vm_1, vm_2])
-        v_max = np.percentile(all_vm, 99.7) if len(all_vm) > 0 else 1.0
+    pl = pv.Plotter()
+    vm_1 = mesh1.point_data["von_mises"]
+    vm_2 = mesh2.point_data["von_mises"]
+    all_vm = np.concatenate([vm_1, vm_2])
 
-        pl.add_mesh(
-            blocks,
-            scalars="von_mises",
-            cmap="turbo",
-            show_edges=True,
-            clim=[0, v_max],
-            scalar_bar_args={"title": "Von Mises Stress"},
-        )
+    # Cap the color scale at the 95th percentile (ignores the top 5% singularity spike)
+    v_max = np.percentile(all_vm, 99.5)
 
-        pl.view_xy()
-        pl.enable_anti_aliasing()
-        pl.show()
-
-    # Continue evaluating error...
-    get_exact_strain, get_exact_stress = derive_analytical_fields(
-        crack_angle=crack_angle
+    pl.add_mesh(
+        blocks,
+        scalars="von_mises",  # The exact string key in your point_data dict
+        cmap="turbo",  # A great colormap for stress fields (or use "jet", "viridis")
+        show_edges=True,  # Shows the mesh grid (including your sub-triangulations!)
+        clim=[0, v_max],
+        scalar_bar_args={"title": "Von Mises Stress"},
     )
+
+    pl.view_xy()
+    pl.enable_anti_aliasing()
+    pl.show()
+
+    # ---------------------------------------------------------
+    # ERROR EVALUATION
+    # ---------------------------------------------------------
+    get_exact_strain, get_exact_stress = derive_analytical_fields()
 
     total_exact_energy_sq = 0.0
     total_error_energy_sq = 0.0
@@ -569,6 +449,7 @@ def test_pure_mode_1_analytical_benchmark(
         )
 
         Ue = fill_element_displacement(elem_nodes, model.list_dof, model.Ug)
+
         ex_sq, err_sq = error_fn(elem, Ue, get_exact_strain, get_exact_stress)
 
         total_exact_energy_sq += ex_sq
@@ -578,69 +459,42 @@ def test_pure_mode_1_analytical_benchmark(
     return relative_error
 
 
-def run_convergence_study(crack_angle=0.0):
-    # mesh_sizes = [21, 33, 41, 51, 61, 81, 101, 121, 161]
-    mesh_sizes = np.array([11, 21, 31, 41, 61, 81, 121, 161])
-    # mesh_sizes = [40, 41, 42]
+def run_convergence_study():
+    # mesh_sizes = [9, 19, 31, 41, 55]
+    mesh_sizes = [42, 56, 80, 100, 120]
     h_vals = [1.0 / n for n in mesh_sizes]
 
     errors_uncorrected = []
     errors_corrected = []
-    # errors_corrected_tri = []
 
+    print("Running Convergence Study...")
     print(
-        f"Running Convergence Study at Crack Angle = {np.degrees(crack_angle):.1f}°..."
+        f"{'Elements (NxN)':<15} | {'h':<10} | {'Uncorrected Error':<20} | {'Corrected Error'}"
     )
-    print(
-        f"{'Elements':<15} | {'h':<10} | {'Uncorr. Quad':<15} | {'Corr. Quad':<15} | {'Corr. Tri'}"
-    )
-    print("-" * 80)
+    print("-" * 72)
 
     for n, h in zip(mesh_sizes, h_vals):
-        # Standard SGFEM (Uncorrected Quads)
-        err_uncorr = test_pure_mode_1_analytical_benchmark(
-            n, n, False, crack_angle=crack_angle, plot=False
-        )
-
-        # Stable-Corrected XFEM (Corrected Quads)
-        err_corr = test_pure_mode_1_analytical_benchmark(
-            n, n, True, crack_angle=crack_angle, plot=False
-        )
-
-        # Stable-Corrected XFEM (Corrected Triangles)
-        # err_corr_tri = test_pure_mode_1_analytical_benchmark(
-        #     n,
-        #     n,
-        #     True,  # Passing True here to match SGFEM behavior for tris
-        #     gen=tf.gen_rect_Tri3n,
-        #     error_fn=calculate_element_energy_norm_tri,
-        #     geometrical_range=0.6,
-        #     crack_angle=crack_angle,
-        #     plot=False,
-        # )
+        err_uncorr = test_pure_mode_1_analytical_benchmark(n, n, False)
+        err_corr = test_pure_mode_1_analytical_benchmark(n, n, True)
 
         errors_uncorrected.append(err_uncorr)
         errors_corrected.append(err_corr)
-        # errors_corrected_tri.append(err_corr_tri)
 
         print(
-            f"{n:<15} | {h:<10.4f} | {err_uncorr * 100.0:>13.4f}% | {err_corr * 100.0:>13.4f}% %"
+            f"{n:<15} | {h:<10.4f} | {err_uncorr * 100.0:>16.4f}% | {err_corr * 100.0:>14.4f}%"
         )
 
     log_h = np.log(h_vals)
     slope_uncorr, _ = np.polyfit(log_h, np.log(errors_uncorrected), 1)
     slope_corr, _ = np.polyfit(log_h, np.log(errors_corrected), 1)
-    # slope_corr_tri, _ = np.polyfit(log_h, np.log(errors_corrected_tri), 1)
 
-    print("-" * 80)
-    print(f"Uncorrected Quad Rate (Slope): {slope_uncorr:.4f} (Expected: ~0.5)")
-    print(f"Corrected Quad Rate (Slope):   {slope_corr:.4f} (Expected: ~1.0)")
-    # print(f"Corrected Tri Rate (Slope):    {slope_corr_tri:.4f} (Expected: ~1.0)")
+    print("-" * 72)
+    print(f"Uncorrected Rate (Slope): {slope_uncorr:.4f} (Expected: ~0.5)")
+    print(f"Corrected Rate (Slope):   {slope_corr:.4f} (Expected: ~1.0)")
 
-    plt.figure(figsize=(6, 4))
+    plt.figure(figsize=(9, 7))
     ax = plt.gca()
 
-    # 1. Uncorrected Quads (Red)
     plt.loglog(
         h_vals,
         errors_uncorrected,
@@ -650,13 +504,12 @@ def run_convergence_study(crack_angle=0.0):
         linewidth=2,
         color="red",
         markerfacecolor="none",
-        label="SO-XFEM",
+        label=f"Stable-Orthogonalized XFEM (Avg Slope: {slope_uncorr:.2f})",
     )
     annotate_local_slopes(
         h_vals, errors_uncorrected, ax, text_offset=(-20, 30), x_is_h=True, color="red"
     )
 
-    # 2. Corrected Quads (Blue)
     plt.loglog(
         h_vals,
         errors_corrected,
@@ -666,35 +519,12 @@ def run_convergence_study(crack_angle=0.0):
         linewidth=2,
         color="blue",
         markerfacecolor="none",
-        label="SCO-XFEM",
+        label=f"Stable-Corrected-Orthogonalized XFEM (Avg Slope: {slope_corr:.2f})",
     )
     annotate_local_slopes(
-        h_vals, errors_corrected, ax, text_offset=(20, -30), x_is_h=True, color="blue"
+        h_vals, errors_corrected, ax, text_offset=(20, -30), x_is_h=True, color="black"
     )
 
-    # 3. Corrected Triangles (Green)
-    # plt.loglog(
-    #     h_vals,
-    #     errors_corrected_tri,
-    #     marker="^",
-    #     markersize=8,
-    #     linestyle="-",
-    #     linewidth=2,
-    #     color="green",
-    #     markerfacecolor="none",
-    #     label=f"Stable-Corrected Triangles (Avg Slope: {slope_corr_tri:.2f})",
-    # )
-    # # Offset the annotations slightly so they don't perfectly overlap the blue ones
-    # annotate_local_slopes(
-    #     h_vals,
-    #     errors_corrected_tri,
-    #     ax,
-    #     text_offset=(0, 25),
-    #     x_is_h=True,
-    #     color="green",
-    # )
-
-    # Theoretical Lines
     C_1 = errors_corrected[0] / (h_vals[0] ** 1.0)
     theo_1 = [C_1 * (h**1.0) for h in h_vals]
     plt.loglog(
@@ -728,22 +558,13 @@ def run_convergence_study(crack_angle=0.0):
         edgecolor="black",
         fancybox=False,
     )
+
     plt.xticks(h_vals, labels=[f"{h:.3f}" for h in h_vals])
 
     plt.tight_layout()
-    plt.savefig("convergence_annotated_with_tri.pdf", dpi=300)
+    plt.savefig("convergence_annotated.pdf", dpi=300)
     plt.show()
 
 
 if __name__ == "__main__":
-    # Test 1: Run a single plot explicitly at exactly 45 degrees
-    # to visualize the crack passing through the node diagonals.
-    print(
-        "Testing visualization for diagonal crack (close window to start convergence study)..."
-    )
-    # test_pure_mode_1_analytical_benchmark(
-    #     41, 41, True, crack_angle=-np.pi / 4, plot=True
-    # )
-
-    # Test 2: Run the full convergence study at 45 degrees
-    run_convergence_study(crack_angle=0.0)
+    run_convergence_study()

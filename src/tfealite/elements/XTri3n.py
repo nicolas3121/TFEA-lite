@@ -269,3 +269,13 @@ class XTri3n(Tri3n):
             nat_coords,
             tip_coords,
         )
+
+    def cal_stresses(self, nat_coords, Ue):
+        Ue = np.asarray(Ue, dtype=float).ravel()
+        _, dN_dxi = self.shape_functions(nat_coords)
+        J = dN_dxi[:, :, : self.N_FN] @ self.node_coords
+        dN_dxy = np.linalg.solve(J, dN_dxi)
+        B = cal_B_2d_vec(dN_dxy)
+        eps = B @ Ue
+        sig = self.C @ eps[:, :, None]
+        return sig
