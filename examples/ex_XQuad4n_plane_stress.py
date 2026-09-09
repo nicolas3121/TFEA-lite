@@ -1,8 +1,8 @@
-import tfealite as tf
-import scipy as sp
 import numpy as np
+import scipy as sp
 from scipy.linalg import svdvals
 
+import tfealite as tf
 
 nodes, elements = tf.gen_rect_Quad4n(10, 10, 25, 25)
 materials = [[1, {"E": 1, "nu": 0.33, "rho": 7850}]]

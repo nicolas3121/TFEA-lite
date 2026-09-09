@@ -9,8 +9,8 @@ from .utils import (
     cal_B_2d_vec,
     cut_embedding_tri_iter,
     enriched_shape_functions,
-    partial_cut_embedding_tri_iter,
     jump_shape_functions,
+    partial_cut_embedding_tri_iter,
 )
 
 
@@ -56,8 +56,10 @@ class XTri3n(Tri3n):
         h_enrich: bool,
         t_enrich: bool,
         partial_cut: bool,
-        in_range=np.ones(3, dtype=bool),
+        in_range=None,
     ):
+        if in_range is None:
+            in_range = (np.ones(3, dtype=bool),)
         super().__init__(node_coords, material, real)
         self.phi_n = phi_n
         self.phi_t = phi_t

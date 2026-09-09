@@ -1,10 +1,10 @@
-from numpy.typing import NDArray
 import numpy as np
-from .FEModel import FEModel
-from .core.level_set import LevelSet, CutType
-from .core import model
+from numpy.typing import NDArray
+
 from .core import assembly as asm
-from .core import dofs
+from .core import dofs, model
+from .core.level_set import CutType, LevelSet
+from .FEModel import FEModel
 from .visualization.build_mesh import build_mesh
 
 
@@ -145,7 +145,9 @@ class XFEModel(FEModel):
 
         self.list_dof.update()
 
-    def cal_global_matrices(self, elem, eval_mass=False, skip_elements={}):
+    def cal_global_matrices(self, elem, eval_mass=False, skip_elements=None):
+        if skip_elements is None:
+            skip_elements = {}
         asm.cal_KgMg(
             self,
             elem,

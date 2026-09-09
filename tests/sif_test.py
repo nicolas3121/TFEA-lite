@@ -1,22 +1,22 @@
 import numpy as np
+import pyvista as pv
 from scipy.interpolate import BSpline, splprep
 
 import tfealite as tf
 from tfealite import DofType
 from tfealite.core.sif import DisplacementCorrelationMethodSIF as DCMSIF
 from tfealite.core.sif import DisplacementCorrelationMethodSIF3D as DCMSIF3D
-from tfealite.core.surfaces import init_crack_plane_geomdl, geomdl_to_NdBSplines
+from tfealite.core.surfaces import geomdl_to_NdBSplines, init_crack_plane_geomdl
 from tfealite.visualization.build_mesh import (
-    my_build_Tetr4n,
     build_XTetr4n,
+    my_build_Tetr4n,
 )
-import pyvista as pv
 
 
 def test_pure_mode_1():
     E_mod = 200e9
     nu = 0.3
-    kappa = (3 - nu) / (3 + nu)
+    kappa = (3 - nu) / (1 + nu)
     G_mod = (E_mod) / (2 * (1 + nu))
     a = 0.115
     W = 0.5
@@ -38,7 +38,7 @@ def test_pure_mode_1():
     p2 = np.array([0.5 + a, 0.75])
 
     pts = np.linspace(p1, p2, 4).T
-    tck, u = splprep(pts, s=0, k=3)
+    tck, _u = splprep(pts, s=0, k=3)
     bspline = BSpline(tck[0], np.transpose(tck[1]), tck[2])
     h = 2 * W / x_elem
     model.insert_crack_spline(bspline, embedded=True, h=h, snapping_tolerance=0.03)
@@ -74,7 +74,7 @@ def test_pure_mode_1():
         kappa, G_mod, np.array([0.025, 0.031, 0.035, 0.038, 0.043, 0.048, 0.055]), None
     )
     # dcm = DCMSIF(kappa, G_mod, np.array([0.035, 0.038, 0.043, 0.048]), None)
-    K_I, K_II = dcm.cal_sif(model.level_sets[0], model, model.cut_info, 1.0)
+    K_I, K_II, _T_matrix = dcm.cal_sif(model.level_sets[0], model, model.cut_info, 1.0)
 
     # analytical solutions https://doi.org/10.1016/0013-7944(68)90027-1
     K_I_analytical = 1 * np.sqrt(np.pi * a) * np.sqrt(1 / np.cos((np.pi * a) / (2 * W)))
@@ -143,7 +143,7 @@ def test_pure_mode_1():
 def test_mixed_mode():
     E_mod = 200e9
     nu = 0.3
-    kappa = (3 - nu) / (3 + nu)
+    kappa = (3 - nu) / (1 + nu)
     G_mod = (E_mod) / (2 * (1 + nu))
     a = 0.115
     W = 0.75
@@ -167,7 +167,7 @@ def test_mixed_mode():
     p2 = np.array([W + a * np.cos(angle), H + a * np.sin(angle)])
 
     pts = np.linspace(p1, p2, 4).T
-    tck, u = splprep(pts, s=0, k=3)
+    tck, _u = splprep(pts, s=0, k=3)
     bspline = BSpline(tck[0], np.transpose(tck[1]), tck[2])
     h = 2 * W / x_elem
     model.insert_crack_spline(bspline, embedded=True, h=h, snapping_tolerance=0.03)
@@ -206,7 +206,7 @@ def test_mixed_mode():
     #     np.array([0.018, 0.021, 0.025, 0.031, 0.035, 0.038, 0.043, 0.048, 0.055]),
     #     None,
     # )
-    K_I, K_II = dcm.cal_sif(model.level_sets[0], model, model.cut_info, 1.0)
+    K_I, K_II, _T_matrix = dcm.cal_sif(model.level_sets[0], model, model.cut_info, 1.0)
     print("numerical", K_I, K_II)
 
     K_I_analytical = 1 * np.sqrt(np.pi * a) * np.sin(angle) ** 2

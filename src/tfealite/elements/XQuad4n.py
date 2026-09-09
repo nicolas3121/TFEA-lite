@@ -8,10 +8,10 @@ from .Quad4n import Quad4n
 from .utils import (
     cal_B_2d_vec,
     cal_N_2d_vec,
-    enriched_shape_functions,
     cut_embedding_tri_iter,
-    partial_cut_embedding_tri_iter,
+    enriched_shape_functions,
     jump_shape_functions,
+    partial_cut_embedding_tri_iter,
 )
 
 
@@ -63,8 +63,10 @@ class XQuad4n(Quad4n):
         h_enrich: bool,
         t_enrich: bool,
         partial_cut: bool,
-        in_range=np.ones(4, dtype=bool),
+        in_range=None,
     ):
+        if in_range is None:
+            in_range = (np.ones(4, dtype=bool),)
         super().__init__(node_coords, material, real)
         self.phi_n = phi_n
         self.phi_t = phi_t
@@ -84,6 +86,8 @@ class XQuad4n(Quad4n):
         Nc1 = None
         Nc2 = None
         if self.h_enrich or self.partial_cut:
+            print("phi_n", self.phi_n)
+            print("phi_t", self.phi_t)
             Nc1, Nc2 = self._cal_intersections()
         else:
             x_e = self.node_coords
@@ -110,6 +114,7 @@ class XQuad4n(Quad4n):
                     axis=0,
                 )
         if self.partial_cut:
+            # print("starting partial cut")
             Ke_temp, _ = super().cal_element_matrices(eval_mass=False)
             Ke[: self.N_DOFS, : self.N_DOFS] = Ke_temp
             assert Nc1 is not None and Nc2 is not None
@@ -149,10 +154,13 @@ class XQuad4n(Quad4n):
                 correction,
                 eval_mass,
             )
+            # print("ending partial cut")
         elif self.h_enrich:
             assert Nc1 is not None and Nc2 is not None
+            # print("starting full cut")
             self._integrate_sub_tri(Ke, Me, Nc1, self.NAT_1, eval_mass)
             self._integrate_sub_tri(Ke, Me, Nc2, self.NAT_2, eval_mass)
+            # print("ending full cut")
 
         if eval_mass:
             return Ke, Me
@@ -264,8 +272,8 @@ class XQuad4n(Quad4n):
 
     def _cal_tip_nat_coords(self):
         xi, eta = 0.0, 0.0
-        ZERO_TOL = 1e-10
-        for _ in range(50):
+        ZERO_TOL = 1e-16
+        for _ in range(1000):
             N, dN_dxi = self._base_shape_functions(np.stack([xi, eta], axis=0))
             N = N[0]
             dN_dxi = dN_dxi[0]
@@ -313,7 +321,7 @@ class XQuad4n(Quad4n):
         p4 = p_mid.copy()
         phi_n = self.phi_n
 
-        for _ in range(50):
+        for _ in range(100):
             N, dN_dxi = self._base_shape_functions(p4)
             N, dN_dxi = N[0], dN_dxi[0]
 
@@ -343,6 +351,7 @@ class XQuad4n(Quad4n):
         x_e = self.node_coords
 
         force_linear = False
+        w_tot = 0
 
         while True:
             Ke_temp = np.zeros_like(Ke)
@@ -381,6 +390,7 @@ class XQuad4n(Quad4n):
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
                 B = cal_B_2d_vec(dN_dxy_sub)
                 w_eff = w * correction * detJ * detJi_mod
+                w_tot += np.sum(w_eff)
 
                 Ke_temp += np.sum(
                     B.transpose(0, 2, 1) @ self.C @ B * w_eff[:, None, None], axis=0
@@ -401,6 +411,7 @@ class XQuad4n(Quad4n):
                 print("warning had to fall back to linear triangles (full cut)")
                 print(self.phi_n)
                 force_linear = True
+        # print("w_tot", w_tot)
 
     def _get_mapped_coords(
         self,
@@ -416,7 +427,10 @@ class XQuad4n(Quad4n):
         on_crack = np.abs(sub_phi_n) < ZERO_TOL
         is_on_crack = np.sum(on_crack & behind_tip) == 2
         p1_idx = np.where(~on_crack)[0][0]
-        sign = np.sign(sub_phi_n[p1_idx])
+        if np.sum(behind_tip) > 1:
+            sign = np.sign(sub_phi_n[p1_idx])
+        else:
+            sign = None
 
         if not force_linear and is_on_crack:
             c1, c2 = np.where(on_crack)[0]
@@ -468,6 +482,7 @@ class XQuad4n(Quad4n):
         x_e = self.node_coords
         Ni_template = np.zeros((3, 3))
         Ni_template[:, 0] = tip
+        w_tot = 0
 
         force_linear = False
         while True:
@@ -522,6 +537,7 @@ class XQuad4n(Quad4n):
                 dN_dxy_sub = np.linalg.solve(J, dN_dxi_sub)
 
                 w_eff_all = rule_w_all * correction * w_d_all * detJi_mod * detJ
+                w_tot += np.sum(w_eff_all[:N_gp])
 
                 B_all = cal_B_2d_vec(dN_dxy_sub[:, :, : self.N_FN])
                 TIP_B_all = cal_B_2d_vec(dN_dxy_sub[:, :, self.N_FN :])
@@ -564,6 +580,7 @@ class XQuad4n(Quad4n):
                 print("warning had to fall back to linear triangles (partial cut)")
                 print("phi_n", self.phi_n)
                 force_linear = True
+        # print("w_tot", w_tot)
 
     def _cubic_shape_functions(self, nat_coords):
         xi = np.atleast_1d(nat_coords[0])

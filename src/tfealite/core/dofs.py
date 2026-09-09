@@ -1,6 +1,7 @@
 from enum import IntFlag, auto
+from typing import Final
+
 import numpy as np
-from typing import Final, Tuple
 
 
 # if add extra dofs check if still fits in 32 bits otherwise otherwise increase size in model.gen_list_dof
@@ -53,7 +54,7 @@ class DofList:
         else:
             return None
 
-    def __getitem__(self, key: Tuple[int, DofType]):
+    def __getitem__(self, key: tuple[int, DofType]):
         node = key[0]
         dof = key[1]
         res = self.get(node, dof)

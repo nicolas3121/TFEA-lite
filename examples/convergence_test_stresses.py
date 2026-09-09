@@ -1,13 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import pyvista as pv
+import scipy.sparse as sps
 import sympy as sp
 from scipy.sparse.linalg import spsolve
-import scipy.sparse as sps
-from tfealite.visualization.build_mesh import (
-    my_build_Quad4n,
-    build_XQuad4n,
-)
-import pyvista as pv
 
 import tfealite as tf
 import tfealite.core.quadratures as qd
@@ -19,6 +15,10 @@ from tfealite.elements.utils import (
     cut_embedding_tri_iter,
     fill_element_displacement,
     partial_cut_embedding_tri_iter,
+)
+from tfealite.visualization.build_mesh import (
+    build_XQuad4n,
+    my_build_Quad4n,
 )
 
 
@@ -44,9 +44,9 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False, color="
             va="center",
             fontsize=10,
             color=color,
-            arrowprops=dict(
-                arrowstyle="->", color=color, shrinkA=0, shrinkB=5, alpha=0.7
-            ),
+            arrowprops={
+                "arrowstyle": "->", "color": color, "shrinkA": 0, "shrinkB": 5, "alpha": 0.7
+            },
         )
 
 

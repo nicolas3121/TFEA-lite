@@ -1,10 +1,10 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
-import matplotlib.pyplot as plt
 
 import tfealite as tf
-from tfealite.elements.XTetr4n import XTetr4n, Tetr4n
+from tfealite.elements.XTetr4n import Tetr4n, XTetr4n
 
 
 def scaled_condition_number(K_sparse):
@@ -71,7 +71,7 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False):
             ha="center",
             va="center",
             fontsize=10,
-            arrowprops=dict(arrowstyle="->", color="black", shrinkA=0, shrinkB=6),
+            arrowprops={"arrowstyle": "->", "color": "black", "shrinkA": 0, "shrinkB": 6},
         )
 
 
@@ -194,7 +194,7 @@ def run_condition_number_study_3d():
     # =========================================================
     # PLOTTING
     # =========================================================
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(6, 4))
     ax = plt.gca()
 
     # 1. Standard FEM
@@ -223,7 +223,7 @@ def run_condition_number_study_3d():
         markersize=7,
         markerfacecolor="none",
         markeredgewidth=1.5,
-        label="Stable-Corrected-Orthogonalized XFEM",
+        label="SCO-XFEM",
     )
     annotate_local_slopes(h_vals, cond_sc, ax, text_offset=(20, -20), x_is_h=True)
 
@@ -238,7 +238,7 @@ def run_condition_number_study_3d():
         markersize=7,
         markerfacecolor="none",
         markeredgewidth=1.5,
-        label="Stable XFEM",
+        label="S-XFEM",
     )
     annotate_local_slopes(h_vals, cond_std, ax, text_offset=(-25, 25), x_is_h=True)
 

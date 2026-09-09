@@ -1,14 +1,13 @@
-from geomdl import BSpline
-from geomdl import utilities
 import numpy as np
+from geomdl import BSpline, utilities
 from scipy.interpolate import NdBSpline
 
 
 def init_crack_plane_geomdl(
     width,
     length,
-    rotation=np.eye(3),
-    translation=np.zeros(3),
+    rotation=None,
+    translation=None,
     num_u_splines=5,
     num_v_pts=5,
     embedded=False,
@@ -18,6 +17,10 @@ def init_crack_plane_geomdl(
     if embedded crack origin rotation at center of crack
     """
     surfaces = []
+    if rotation is None:
+        rotation = np.eye(3)
+    if translation is None:
+        translation = np.zeros(3)
 
     x_vals = np.linspace(-width / 2.0, width / 2.0, num_v_pts)
 
@@ -78,11 +81,15 @@ def init_crack_plane_geomdl(
 
 def init_half_coin_crack_geomdl(
     radius=1.0,
-    rotation=np.eye(3),
-    translation=np.zeros(3),
+    rotation=None,
+    translation=None,
     num_u_splines=50,
     num_v_pts=30,
 ):
+    if rotation is None:
+        rotation = np.eye(3)
+    if translation is None:
+        translation = np.zeros(3)
     """
     crack runs in positive y direction
     at base from -r / 2 -> r / 2 in x direction

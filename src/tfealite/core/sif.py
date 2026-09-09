@@ -1,14 +1,20 @@
 import numpy as np
-
-from ..core.dofs import BRANCH_DOFS, HEAVISIDE_DOFS
-from ..elements.utils import fill_element_displacement
-from ..elements.XQuad4n import XQuad4n
-from ..elements.XTri3n import XTri3n
-from ..elements.XTetr4n import XTetr4n
-from .level_set import CutType, project_on_line, project_on_surface
-from scipy.spatial import KDTree
 import pyvista as pv
+from scipy.spatial import KDTree
 
+from ..core import quadratures as qd
+from ..core.dofs import BRANCH_DOFS, HEAVISIDE_DOFS
+from ..core.quadratures import DuffyDistance
+from ..elements.utils import (
+    cal_B_2d_vec,
+    cut_embedding_tri_iter,
+    fill_element_displacement,
+    partial_cut_embedding_tri_iter,
+)
+from ..elements.XQuad4n import XQuad4n
+from ..elements.XTetr4n import XTetr4n
+from ..elements.XTri3n import XTri3n
+from .level_set import CutType, project_on_line, project_on_surface
 
 ELEM_FN_MAP = {"Tri3n": XTri3n, "Quad4n": XQuad4n, "Tetr4n": XTetr4n}
 
@@ -77,6 +83,343 @@ def _build_elem_3d(model, level_set, cut_type, element):
     return elem
 
 
+def compute_auxiliary_fields(r, theta, kosolov, shear_mod):
+    """
+    Computes Mode I & II auxiliary stresses, displacement gradients, and strains
+    in crack-tip local coordinate system (Williams asymptotic fields).
+    """
+    sqr = np.sqrt(r)
+
+    fac_stress = 1.0 / np.sqrt(2.0 * np.pi)
+    fac_disp = 1.0 / (2.0 * shear_mod * np.sqrt(2.0 * np.pi))
+
+    ct = np.cos(theta)
+    st = np.sin(theta)
+    ct2 = np.cos(theta / 2.0)
+    st2 = np.sin(theta / 2.0)
+    c3t2 = np.cos(1.5 * theta)
+    s3t2 = np.sin(1.5 * theta)
+
+    drdx, drdy = ct, st
+    dtdx, dtdy = -st / r, ct / r
+
+    aux_stress = np.zeros((2, 2, 2))  # [mode, i, j]
+    aux_grad_u = np.zeros((2, 2, 2))  # [mode, i, j] (du_i / dx_j)
+    aux_strain = np.zeros((2, 2, 2))
+
+    # --- Mode I (aux_mode = 0) ---
+    aux_stress[0, 0, 0] = (fac_stress / sqr) * ct2 * (1.0 - st2 * s3t2)
+    aux_stress[0, 1, 1] = (fac_stress / sqr) * ct2 * (1.0 + st2 * s3t2)
+    aux_stress[0, 0, 1] = (fac_stress / sqr) * st2 * ct2 * c3t2
+    aux_stress[0, 1, 0] = aux_stress[0, 0, 1]
+
+    du1_dr = fac_disp * 0.5 / sqr * ct2 * (kosolov - ct)
+    du1_dt = fac_disp * sqr * (-0.5 * st2 * (kosolov - ct) + ct2 * st)
+    du2_dr = fac_disp * 0.5 / sqr * st2 * (kosolov - ct)
+    du2_dt = fac_disp * sqr * (0.5 * ct2 * (kosolov - ct) + st2 * st)
+
+    aux_grad_u[0, 0, 0] = du1_dr * drdx + du1_dt * dtdx
+    aux_grad_u[0, 0, 1] = du1_dr * drdy + du1_dt * dtdy
+    aux_grad_u[0, 1, 0] = du2_dr * drdx + du2_dt * dtdx
+    aux_grad_u[0, 1, 1] = du2_dr * drdy + du2_dt * dtdy
+
+    # --- Mode II (aux_mode = 1) ---
+    aux_stress[1, 0, 0] = -(fac_stress / sqr) * st2 * (2.0 + ct2 * c3t2)
+    aux_stress[1, 1, 1] = (fac_stress / sqr) * st2 * ct2 * c3t2
+    aux_stress[1, 0, 1] = (fac_stress / sqr) * ct2 * (1.0 - st2 * s3t2)
+    aux_stress[1, 1, 0] = aux_stress[1, 0, 1]
+
+    du1_dr = fac_disp * 0.5 / sqr * st2 * (kosolov + 2.0 + ct)
+    du1_dt = fac_disp * sqr * (0.5 * ct2 * (kosolov + 2.0 + ct) - st2 * st)
+    du2_dr = -fac_disp * 0.5 / sqr * ct2 * (kosolov - 2.0 + ct)
+    du2_dt = -fac_disp * sqr * (-0.5 * st2 * (kosolov - 2.0 + ct) - ct2 * st)
+
+    aux_grad_u[1, 0, 0] = du1_dr * drdx + du1_dt * dtdx
+    aux_grad_u[1, 0, 1] = du1_dr * drdy + du1_dt * dtdy
+    aux_grad_u[1, 1, 0] = du2_dr * drdx + du2_dt * dtdx
+    aux_grad_u[1, 1, 1] = du2_dr * drdy + du2_dt * dtdy
+
+    for m in range(2):
+        aux_strain[m] = 0.5 * (aux_grad_u[m] + aux_grad_u[m].T)
+
+    return aux_stress, aux_grad_u, aux_strain
+
+
+def calculate_element_I_mode(element, Ue, T_matrix, q_nodes, real_tip, kosolov, shear_mod):
+    I_mode = np.zeros(2)
+    N_FN = 4
+    DET_TOL = -1e-14
+
+
+    def accumulate_I_mode(nat_coords, w_eff, sign=None):
+        nonlocal I_mode
+
+        if sign is not None:
+            N, dN_dxi = element.shape_functions(nat_coords, enforce_sign=sign)
+        else:
+            N, dN_dxi = element.shape_functions(nat_coords)
+            
+        # N shape: (num_nodes, num_gp) or similar; adjust based on your shape function convention
+        # x_gp shape: (num_gp, 2)
+        x_gp = N[:, :N_FN].T @ element.node_coords
+
+        J = dN_dxi[:, :, :N_FN] @ element.node_coords  # (num_gp, 2, 2)
+        dN_dxy = np.linalg.solve(J, dN_dxi)             # (num_gp, 2, num_nodes)
+        B = cal_B_2d_vec(dN_dxy)                        # (num_gp, 3, num_dof)
+
+        eps_h_voigt = np.einsum("gij,j->gi", B, Ue)     # (num_gp, 3) -> [eps_xx, eps_yy, 2*eps_xy]
+        sig_h_voigt = np.einsum("ij,gj->gi", element.C, eps_h_voigt) # (num_gp, 3)
+
+        # Reshape Voigt vectors [s_xx, s_yy, s_xy] to 2x2 tensors (g, 2, 2)
+        sig_h = np.zeros((len(w_eff), 2, 2))
+        sig_h[:, 0, 0] = sig_h_voigt[:, 0]
+        sig_h[:, 1, 1] = sig_h_voigt[:, 1]
+        sig_h[:, 0, 1] = sig_h[:, 1, 0] = sig_h_voigt[:, 2]
+
+        eps_h = np.zeros((len(w_eff), 2, 2))
+        eps_h[:, 0, 0] = eps_h_voigt[:, 0]
+        eps_h[:, 1, 1] = eps_h_voigt[:, 1]
+        eps_h[:, 0, 1] = eps_h[:, 1, 0] = 0.5 * eps_h_voigt[:, 2]
+
+        # q-gradient in global coordinates: sum(q_i * dN_i/dx_j) -> shape (num_gp, 2)
+        grad_q_g = np.einsum('i,gdi->gd', q_nodes, dN_dxy[:, :, :element.N_FN])
+
+        # Transform to crack-tip local coordinates
+        x_loc = (T_matrix @ (x_gp - real_tip).T).T  # (num_gp, 2)
+        r = np.linalg.norm(x_loc, axis=1)           # (num_gp,)
+        
+        # Filter out points too close to the tip to avoid division by zero
+        valid_mask = r >= 1.0e-12
+        if not np.any(valid_mask):
+            return
+
+        # Restrict arrays to valid Gauss points
+        x_loc = x_loc[valid_mask]
+        r_v = r[valid_mask]
+        theta = np.arctan2(x_loc[:, 1], x_loc[:, 0])
+        
+        grad_q_loc = (T_matrix @ grad_q_g[valid_mask].T).T                        # (num_valid_gp, 2)
+        eps_h_loc = T_matrix @ eps_h[valid_mask] @ T_matrix.T                    # (num_valid_gp, 2, 2)
+        sig_h_loc = T_matrix @ sig_h[valid_mask] @ T_matrix.T                    # (num_valid_gp, 2, 2)
+        w_eff_v = w_eff[valid_mask]
+
+        aux_stress, aux_grad_u, aux_strain = compute_auxiliary_fields(r_v, theta, kosolov, shear_mod)
+
+        # Fully vectorized interaction integral terms using einsum
+        # i1: sig_h_loc[g, i, j] * aux_grad_u[m, g, i, 0] * grad_q_loc[g, j]
+        i1 = np.einsum('gij, mgi, gj -> mg', sig_h_loc, aux_grad_u[:, :, :, 0], grad_q_loc)
+
+        # i2: aux_stress[m, g, i, j] * eps_h_loc[g, i, 0] * grad_q_loc[g, j]
+        i2 = np.einsum('mgij, gi, gj -> mg', aux_stress, eps_h_loc[:, :, 0], grad_q_loc)
+
+        # Mutual strain energy W^(1,2): contraction of sig_h_loc and aux_strain
+        W_12 = np.einsum('gij, mgij -> mg', sig_h_loc, aux_strain)
+
+        # Domain integrand across all valid Gauss points: (2, num_valid_gp)
+        integrand = (i1 + i2 - W_12 * grad_q_loc[:, 0][None, :]) * w_eff_v[None, :]
+
+        # Accumulate results for both modes
+        I_mode += np.sum(integrand, axis=1)
+
+
+    if not getattr(element, "h_enrich", False) and not getattr(
+        element, "partial_cut", False
+    ):
+        rule, correction = qd.QUAD_RULES[20]
+        nat_coords = rule[:, :2].T
+
+        _, dN_dxi = element.shape_functions(nat_coords)
+        J = dN_dxi[:, :, :N_FN] @ element.node_coords
+        detJ = np.linalg.det(J)
+        w_eff = rule[:, 2] * correction * detJ
+
+        accumulate_I_mode(nat_coords, w_eff)
+
+    elif getattr(element, "h_enrich", False):
+        Nc1, Nc2 = element._cal_intersections()
+        rule, correction = qd.TRI_RULES[13] if element.t_enrich else qd.TRI_RULES[13]
+
+        def integrate_sub_tri_I_mode(Nc, nat_x_e):
+            for Ni, detJi in cut_embedding_tri_iter(Nc):
+                xi, eta, w = rule[:, 0], rule[:, 1], rule[:, 2]
+                nat_sub_x_e = nat_x_e.T @ Ni
+
+                N, _ = element._base_shape_functions(nat_sub_x_e)
+                sub_phi_n = N @ element.phi_n
+
+                nat_coords_sub, detJi_mod, sign = element._get_mapped_coords(
+                    xi,
+                    eta,
+                    sub_phi_n,
+                    True,
+                    nat_sub_x_e,
+                    detJi,
+                    False,
+                )
+                if np.any(detJi_mod < DET_TOL):
+                    print("warning encounter negative detJi")
+
+                n = np.array([1 - xi - eta, xi, eta])
+                nat_coords_sub = nat_sub_x_e @ n
+
+                N, dN_dxi_sub = element.shape_functions(
+                    nat_coords_sub, enforce_sign=sign
+                )
+
+                J = dN_dxi_sub[:, :, :N_FN] @ element.node_coords
+                detJ = np.linalg.det(J)
+
+                w_eff = w * correction * detJ * detJi_mod
+                accumulate_I_mode(nat_coords_sub, w_eff, sign=sign)
+
+        integrate_sub_tri_I_mode(Nc1, element.NAT_1)
+        integrate_sub_tri_I_mode(Nc2, element.NAT_2)
+
+    elif getattr(element, "partial_cut", False):
+        Nc1, Nc2 = element._cal_intersections()
+        rule, correction = qd.QUAD_RULES[20]
+        rule = rule.copy()
+        rule[:, 0:2] = (1 + rule[:, 0:2]) / 2
+        rule[:, 2] /= 4
+
+        xi_tip, eta_tip = element._cal_tip_nat_coords()
+        tri1_coords = np.vstack([element.NAT_1.T, np.ones(3)])
+        tip1 = np.linalg.solve(tri1_coords, [xi_tip, eta_tip, 1.0])
+        tri2_coords = np.vstack([element.NAT_2.T, np.ones(3)])
+        tip2 = np.linalg.solve(tri2_coords, [xi_tip, eta_tip, 1.0])
+
+        def integrate_partial_cut_I_mode(tip, Nc, rng, nat_x_e):
+            for Ni, detJi in partial_cut_embedding_tri_iter(Nc, tip, rng):
+                nat_sub_x_e = nat_x_e.T @ Ni
+                N, _ = element._base_shape_functions(nat_sub_x_e)
+                x_e_i = N @ element.node_coords
+                sub_phi_n = N @ element.phi_n
+                sub_phi_t = N @ element.phi_t
+                behind_tip = sub_phi_t < 1e-10
+
+                duffy = DuffyDistance(x_e_i)
+                u, v = rule[:, 0], rule[:, 1]
+                xi_d_2, eta_d_2, w_d_2 = duffy.transform(u, v, beta=2)
+
+                nat_coords_sub, detJi_mod, sign = element._get_mapped_coords(
+                    xi_d_2,
+                    eta_d_2,
+                    sub_phi_n,
+                    behind_tip,
+                    nat_sub_x_e,
+                    detJi,
+                    False,
+                )
+                if np.any(detJi_mod < DET_TOL):
+                    print("warning encounter negative detJi")
+                N, dN_dxi_sub = element.shape_functions(
+                    nat_coords_sub, enforce_sign=sign
+                )
+                J = dN_dxi_sub[:, :, 0 : element.N_FN] @ element.node_coords
+                detJ = np.linalg.det(J)
+
+                w_eff = rule[:, 2] * correction * w_d_2 * detJ * detJi_mod
+                accumulate_I_mode(nat_coords_sub, w_eff, sign=sign)
+
+        integrate_partial_cut_I_mode(tip1, Nc1, range(4), element.NAT_1)
+        integrate_partial_cut_I_mode(tip2, Nc2, range(2, 6), element.NAT_2)
+
+    return I_mode
+
+
+class InteractionIntegralMethodSIF:
+    def __init__(self, r1, dr, E, nu, plane_stress):
+        self.E_eff = E if plane_stress else E / (1.0 - nu**2)
+        self.shear_mod = E / (2.0 * (1.0 + nu))
+        self.kosolov = (3.0 - nu) / (1.0 + nu) if plane_stress else (3.0 - 4.0 * nu)
+        self.r1 = r1
+        self.dr = dr
+
+    def _find_j_elements_idx(self, mesh, real_tip, r):
+        real_tip_3d = (real_tip[0], real_tip[1], 0.0)
+        sphere = pv.Sphere(radius=r, center=real_tip_3d)
+
+        centers_poly = mesh.cell_centers()
+
+        selected = centers_poly.select_interior_points(sphere)
+        ball_elem_idx = np.where(selected["selected_points"])[0]
+        return ball_elem_idx
+
+    def cal_sif(self, level_set, model, cut_info: dict, u_tip: float):
+        R_TOL = 0.3
+        assert level_set.bspline is not None
+        bspline = level_set.bspline
+
+        tip = bspline(u_tip)
+
+        mesh = model.mesh
+        original_ids = mesh.cell_data["eid"]
+        cut_elem_ids = np.array(
+            [
+                elem_id - 1
+                for elem_id, (_, cut_type, _) in cut_info.items()
+                if cut_type != CutType.NONE
+            ]
+        )
+        assert np.all(original_ids[cut_elem_ids] == cut_elem_ids + 1)
+        cut_mesh = mesh.extract_cells(cut_elem_ids)
+        original_cell_ids = cut_mesh.cell_data["eid"]
+
+        tip_3d = np.append(tip, 0.0)
+
+        tip_elem_idx = cut_mesh.find_containing_cell(tip_3d)
+        if tip_elem_idx == -1:
+            for (_, cut_type, _) in cut_info.values():
+                if cut_type == CutType.PARTIAL:
+                    break
+            else:
+                print("couldn't find tip")
+                raise ValueError
+        tip_elem_id = original_cell_ids[tip_elem_idx]
+        tip_elem = model.elements[tip_elem_id - 1]
+
+        elem = _build_elem_2d(model, level_set, CutType.PARTIAL, tip_elem)
+        tip_nat_coords = elem._cal_tip_nat_coords()
+        N_tip, dN_dxi_tip = elem._base_shape_functions(tip_nat_coords)
+        J = dN_dxi_tip @ elem.node_coords
+        dN_dxy_tip = np.linalg.solve(J, dN_dxi_tip)
+        real_tip = N_tip[0] @ elem.node_coords
+        real_tip_n = dN_dxy_tip[0] @ elem.phi_n
+        real_tip_n = real_tip_n / np.linalg.norm(real_tip_n)
+        real_tip_t = dN_dxy_tip[0] @ elem.phi_t
+        real_tip_t = real_tip_t - np.dot(real_tip_n, real_tip_t) * real_tip_n
+        real_tip_t = real_tip_t / np.linalg.norm(real_tip_t)
+
+        T_matrix = np.array([real_tip_t, real_tip_n])
+
+        r_max = self.r1 + np.maximum(self.dr)
+        j_element_idx = self._find_j_elements_idx(mesh, real_tip, (1 + R_TOL) * r_max)
+        j_element_ids = original_ids[j_element_idx]
+
+        I_mode = np.zeros(2)
+        for elem_id in j_element_ids:
+            element = model.elements[elem_id - 1]
+            cut_type = cut_info[elem_id][1]
+
+            elem = _build_elem_2d(model, level_set, cut_type, element)
+            Ue = fill_element_displacement(
+                np.asarray(element[4]), model.list_dof, model.Ug
+            ).reshape((-1, 2))
+
+            q_nodes = np.linalg.norm(elem.node_coords - real_tip[None, :], axis=1) <= self.r1
+            # TODO fixen
+
+            I_mode += calculate_element_I_mode(element, Ue, T_matrix, q_nodes, real_tip, self.kosolov, self.shear_mod)
+
+        K_calc = I_mode * self.E_eff / 2.0
+        KI, KII = K_calc[0], K_calc[1]
+        return KI, KII
+
+
+
+
+
+
 class DisplacementCorrelationMethodSIF:
     def __init__(self, kosolov, shear_mod, r, dr):
         self.kosolov = kosolov
@@ -138,7 +481,7 @@ class DisplacementCorrelationMethodSIF:
         tip_elem_idx = cut_mesh.find_containing_cell(tip_3d)
         # assert tip_elem_idx != -1, "Couldn't find element containing tip"
         if tip_elem_idx == -1:
-            for _, (_, cut_type, _) in cut_info.items():
+            for (_, cut_type, _) in cut_info.values():
                 if cut_type == CutType.PARTIAL:
                     break
             else:

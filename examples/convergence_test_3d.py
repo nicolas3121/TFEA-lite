@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
-import scipy.sparse.linalg as spla
 import numpy as np
-import sympy as sp
 import scipy.sparse as sps
+import scipy.sparse.linalg as spla
+import sympy as sp
 
 import tfealite as tf
 import tfealite.core.quadratures as qd
@@ -382,7 +382,7 @@ def test_pure_mode_1_3d_analytical_benchmark(nx, ny, nz, corrected):
 
 
 def run_convergence_study_3d():
-    mesh_sizes = [11, 21, 31, 51]
+    mesh_sizes = [21, 31, 51]
     h_vals = [10.0 / n for n in mesh_sizes]
     errs_uncorr, errs_corr = [], []
 
@@ -394,8 +394,8 @@ def run_convergence_study_3d():
         max(2, int(n / 10))
         # nz = 2
         u, c = (
-            test_pure_mode_1_3d_analytical_benchmark(n, n, n, False),
-            test_pure_mode_1_3d_analytical_benchmark(n, n, n, True),
+            test_pure_mode_1_3d_analytical_benchmark(n, n, 2, False),
+            test_pure_mode_1_3d_analytical_benchmark(n, n, 2, True),
         )
         errs_uncorr.append(u)
         errs_corr.append(c)

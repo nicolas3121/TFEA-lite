@@ -1,16 +1,13 @@
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
-from geomdl import knotvector
-from scipy.interpolate import BSpline
 import numpy as np
-import sympy as sp
-from scipy.sparse.linalg import spsolve
-import scipy.sparse as sps
-
 import pyvista as pv
-from tfealite.visualization.build_mesh import (
-    my_build_Quad4n,
-    build_XQuad4n,
-)
+import scipy.sparse as sps
+import sympy as sp
+from geomdl import knotvector
+from matplotlib.ticker import NullFormatter
+from scipy.interpolate import BSpline
+from scipy.sparse.linalg import spsolve
 
 import tfealite as tf
 import tfealite.core.quadratures as qd
@@ -22,6 +19,10 @@ from tfealite.elements.utils import (
     cut_embedding_tri_iter,
     fill_element_displacement,
     partial_cut_embedding_tri_iter,
+)
+from tfealite.visualization.build_mesh import (
+    build_XQuad4n,
+    my_build_Quad4n,
 )
 
 
@@ -47,9 +48,13 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False, color="
             va="center",
             fontsize=10,
             color=color,
-            arrowprops=dict(
-                arrowstyle="->", color=color, shrinkA=0, shrinkB=5, alpha=0.7
-            ),
+            arrowprops={
+                "arrowstyle": "->",
+                "color": color,
+                "shrinkA": 0,
+                "shrinkB": 5,
+                "alpha": 0.7,
+            },
         )
 
 
@@ -401,8 +406,9 @@ def test_pure_mode_1_analytical_benchmark(
     corrected,
     gen=tf.gen_rect_Quad4n,
     error_fn=calculate_element_errors,
-    geometrical_range=1.0,
+    geometrical_range=0.5,
     crack_angle=0.0,
+    plot_error=False,
     plot=False,
 ):
     E_mod = 1.0
@@ -428,7 +434,8 @@ def test_pure_mode_1_analytical_benchmark(
     )
 
     # Dynamic starting point based on crack_angle to ensure it goes through diagonals.
-    L_crack = 10.0
+    # remember to change
+    L_crack = 10
     tip_x, tip_y = 5.0, 5.0
     p1 = np.array(
         [tip_x - L_crack * np.cos(crack_angle), tip_y - L_crack * np.sin(crack_angle)]
@@ -520,33 +527,6 @@ def test_pure_mode_1_analytical_benchmark(
     # ---------------------------------------------------------
     # RESTORED PYVISTA PLOTTING BLOCK
     # ---------------------------------------------------------
-    if plot:
-        mesh1 = my_build_Quad4n(model, mult=0.1).cast_to_unstructured_grid()
-        ghosts = np.argwhere(mesh1["is_enriched"] > 0)
-        mesh1.remove_cells(ghosts, inplace=True)
-
-        mesh2 = build_XQuad4n(model, mult=0.1)
-
-        blocks = pv.MultiBlock([mesh1, mesh2])
-        pl = pv.Plotter()
-
-        vm_1 = mesh1.point_data.get("von_mises", np.zeros(mesh1.n_points))
-        vm_2 = mesh2.point_data.get("von_mises", np.zeros(mesh2.n_points))
-        all_vm = np.concatenate([vm_1, vm_2])
-        v_max = np.percentile(all_vm, 99.7) if len(all_vm) > 0 else 1.0
-
-        pl.add_mesh(
-            blocks,
-            scalars="von_mises",
-            cmap="turbo",
-            show_edges=True,
-            clim=[0, v_max],
-            scalar_bar_args={"title": "Von Mises Stress"},
-        )
-
-        pl.view_xy()
-        pl.enable_anti_aliasing()
-        pl.show()
 
     # Continue evaluating error...
     get_exact_strain, get_exact_stress = derive_analytical_fields(
@@ -557,6 +537,9 @@ def test_pure_mode_1_analytical_benchmark(
     total_error_energy_sq = 0.0
     total_exact_L2_sq = 0.0
     total_error_L2_sq = 0.0
+
+    error_energy = np.zeros(len(model.elements))
+    error_L2 = np.zeros_like(error_energy)
 
     for i, element_data in enumerate(model.elements):
         elem_id, elem_name, mat_id, real_id, elem_nodes = element_data
@@ -619,6 +602,144 @@ def test_pure_mode_1_analytical_benchmark(
         total_exact_L2_sq += ex_L2_sq
         total_error_L2_sq += err_L2_sq
 
+        error_energy[i] = err_sq
+        error_L2[i] = err_L2_sq
+    if plot_error:
+        assert model.mesh is not None
+        mesh = model.mesh
+
+        # ==========================================
+        # PLOT CONFIGURATION
+        # ==========================================
+        # ==========================================
+
+        # Map the element-wise errors to the mesh cell data
+        mesh.cell_data["Energy_Error"] = error_energy[mesh.cell_data["eid"] - 1]
+        mesh.cell_data["L2_error"] = error_L2[mesh.cell_data["eid"] - 1]
+
+        # 1. Use a square, high-resolution window immediately
+        for plot_field in ["Energy_Error", "L2_error"]:
+            output_file_png = f"convergence_mesh_error_{x_elem}_{'corrected' if corrected else ''}_{plot_field}.png"
+            pl = pv.Plotter(window_size=(3000, 3000), off_screen=True)
+            pl.set_background("white")
+
+            my_blue_gradient = ["#87CEFA", "#4169E1", "#000080"]
+            custom_blues = mcolors.LinearSegmentedColormap.from_list(
+                "CustomBlues", my_blue_gradient
+            )
+
+            # 2. Configure a massive, readable scalar bar for the high-res canvas
+            # Font sizes increased by 20%
+            sargs = {
+                "title": plot_field.replace("_", " "),
+                "color": "black",
+                "title_font_size": 108,  # Increased from 90
+                "label_font_size": 90,  # Increased from 75
+                "width": 0.75,  # Bar takes up 75% of the window width
+                "height": 0.08,  # Thicker bar
+                "position_x": 0.125,  # Centered horizontally ((1 - 0.75) / 2)
+                "position_y": 0.05,  # Placed near the bottom
+                "n_labels": 5,  # Prevents numbers from crowding
+            }
+
+            # 3. Add the main error mesh
+            mesh.set_active_scalars(plot_field)
+            pl.add_mesh(
+                mesh,
+                cmap=custom_blues,
+                show_edges=True,
+                edge_color="black",
+                line_width=1.5,  # Increased from 0.5 so edges don't vanish
+                scalar_bar_args=sargs,
+            )
+
+            # 4. Draw the Crack (Truncated at x=0 or y=10)
+            # Increased resolution to 200 for a precise cut at the boundary
+            t_vals = np.linspace(0, 1.0, 200)
+            crack_pts = bspline(t_vals)
+
+            # Find the first point that goes out of bounds (x < 0 or y > 10)
+            out_of_bounds = (crack_pts[:, 0] < 0) | (crack_pts[:, 1] > 10)
+            if np.any(out_of_bounds):
+                cutoff_idx = np.argmax(
+                    ~out_of_bounds
+                )  # Gets the index of the first True value
+                crack_pts = crack_pts[
+                    cutoff_idx:
+                ]  # Slice the array to drop out-of-bounds points
+
+            crack_pts_3d = np.column_stack((crack_pts, np.zeros(len(crack_pts))))
+            crack_spline = pv.Spline(crack_pts_3d)
+            pl.add_mesh(
+                crack_spline, color="red", line_width=6, label="Crack"
+            )  # Thicker line
+
+            # 5. Draw the Enrichment Circle (Radius = 1.0 around tip)
+            theta = np.linspace(0, 2 * np.pi, 100)
+            circ_pts_3d = np.column_stack(
+                (
+                    tip_x + 1.0 * np.cos(theta),
+                    tip_y + 1.0 * np.sin(theta),
+                    np.zeros_like(theta),
+                )
+            )
+            circle_line = pv.Spline(circ_pts_3d)
+            pl.add_mesh(
+                circle_line,
+                color="green",
+                line_width=6,
+                label="Enrichment Radius (r=1)",
+            )
+
+            # Configure Camera
+            pl.view_xy()
+            pl.enable_anti_aliasing()
+
+            # Optional: Zoom out slightly (e.g., 0.9 or 0.85) so the square mesh
+            # doesn't cramp the legends and scalar bars at the edges.
+            pl.camera.zoom(0.9)
+
+            # Render and save (no need to pass window_size here, it's defined at init)
+            pl.show(screenshot=output_file_png)
+            print(f"Saved high-res raster graphic to: {output_file_png}")
+    if plot:
+        output_file_png = f"von_mises_render_{x_elem}_{corrected}.png"
+        mesh1 = my_build_Quad4n(model, mult=0.0).cast_to_unstructured_grid()
+        ghosts = np.argwhere(mesh1["is_enriched"] > 0)
+        mesh1.remove_cells(ghosts, inplace=True)
+
+        mesh2 = build_XQuad4n(model, mult=0.0)
+
+        blocks = pv.MultiBlock([mesh1, mesh2])
+        pl = pv.Plotter(window_size=(3000, 3000), off_screen=True)
+        pl.set_background("white")
+
+        vm_1 = mesh1.point_data.get("von_mises", np.zeros(mesh1.n_points))
+        vm_2 = mesh2.point_data.get("von_mises", np.zeros(mesh2.n_points))
+        all_vm = np.concatenate([vm_1, vm_2])
+        v_max = np.percentile(all_vm, 99.7) if len(all_vm) > 0 else 1.0
+
+        pl.add_mesh(
+            blocks,
+            scalars="von_mises",
+            cmap="turbo",
+            show_edges=True,
+            clim=[0, v_max],
+            scalar_bar_args={"title": "Von Mises Stress"},
+            show_scalar_bar=False,
+        )
+
+        pl.view_xy()
+        pl.enable_anti_aliasing()
+
+        # Optional: Zoom out slightly (e.g., 0.9 or 0.85) so the square mesh
+        # doesn't cramp the legends and scalar bars at the edges.
+        pl.camera.zoom(0.9)
+
+        # Render and save (no need to pass window_size here, it's defined at init)
+        pl.show(screenshot=output_file_png)
+        print(f"Saved high-res raster graphic to: {output_file_png}")
+
     relative_error_energy = np.sqrt(total_error_energy_sq) / np.sqrt(
         total_exact_energy_sq
     )
@@ -628,8 +749,8 @@ def test_pure_mode_1_analytical_benchmark(
 
 
 def run_convergence_study(crack_angle=0.0):
-    # mesh_sizes = [21, 33, 41, 51, 61, 81, 101, 121]
-    mesh_sizes = np.array([11, 21, 31, 41, 61, 81, 121, 161])
+    mesh_sizes = [21, 33, 41, 51, 61]
+    # mesh_sizes = np.array([33, 35, 39, 41, 43, 61, 81])
     # mesh_sizes = [40, 41, 42]
     h_vals = [10.0 / n for n in mesh_sizes]
 
@@ -649,12 +770,12 @@ def run_convergence_study(crack_angle=0.0):
     for n, h in zip(mesh_sizes, h_vals):
         # Standard SGFEM (Uncorrected Quads)
         err_uncorr_en, err_uncorr_L2 = test_pure_mode_1_analytical_benchmark(
-            n, n, False, crack_angle=crack_angle, plot=False
+            n, n, False, crack_angle=crack_angle, plot_error=True, plot=True
         )
 
         # Stable-Corrected XFEM (Corrected Quads)
         err_corr_en, err_corr_L2 = test_pure_mode_1_analytical_benchmark(
-            n, n, True, crack_angle=crack_angle, plot=False
+            n, n, True, crack_angle=crack_angle, plot_error=True, plot=False
         )
 
         errors_uncorr_en.append(err_uncorr_en)
@@ -687,7 +808,7 @@ def run_convergence_study(crack_angle=0.0):
         f"L2 Norm     - Corrected Quad Rate (Slope):   {slope_corr_L2:.4f} (Expected: ~2.0)"
     )
 
-    plt.figure(figsize=(6, 4))
+    plt.figure(figsize=(8, 5))
     ax1 = plt.gca()
 
     # Uncorrected (SO-XFEM)
@@ -759,6 +880,7 @@ def run_convergence_study(crack_angle=0.0):
         ha="right",
         rotation_mode="anchor",
     )
+    ax1.xaxis.set_minor_formatter(NullFormatter())
 
     plt.tight_layout()
     plt.savefig("convergence_energy_norm.pdf", dpi=300, bbox_inches="tight")
@@ -767,7 +889,7 @@ def run_convergence_study(crack_angle=0.0):
     # ------------------
     # Plot 2: L2 Norm
     # ------------------
-    plt.figure(figsize=(6, 4))
+    plt.figure(figsize=(8, 5))
     ax2 = plt.gca()
 
     # Uncorrected (SO-XFEM)
@@ -830,7 +952,7 @@ def run_convergence_study(crack_angle=0.0):
     ax2.set_ylabel(r"Relative $L_2$ Norm Error", fontsize=13)
     ax2.grid(True, which="both", ls="--", alpha=0.5)
     ax2.invert_xaxis()
-    ax2.legend(fontsize=11, loc="upper right", framealpha=1.0, edgecolor="black")
+    ax2.legend(fontsize=11, loc="upper left", framealpha=1.0, edgecolor="black")
 
     ax2.set_xticks(
         h_vals,
@@ -839,6 +961,7 @@ def run_convergence_study(crack_angle=0.0):
         ha="right",
         rotation_mode="anchor",
     )
+    ax2.xaxis.set_minor_formatter(NullFormatter())
 
     plt.tight_layout()
     plt.savefig("convergence_L2_norm.pdf", dpi=300, bbox_inches="tight")
@@ -856,4 +979,4 @@ if __name__ == "__main__":
     )
 
     # Test 2: Run the full convergence study at 45 degrees
-    run_convergence_study(crack_angle=0)
+    run_convergence_study(crack_angle=-np.pi / 4)

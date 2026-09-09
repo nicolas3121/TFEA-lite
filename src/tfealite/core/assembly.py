@@ -1,15 +1,15 @@
 import numpy as np
+import scipy as sp
 from numba import jit
 
-import scipy as sp
 from .dofs import (
     BASE_DOFS,
-    HEAVISIDE_DOFS,
-    BRANCH_DOFS,
     BRANCH_1_DOFS,
     BRANCH_2_DOFS,
     BRANCH_3_DOFS,
     BRANCH_4_DOFS,
+    BRANCH_DOFS,
+    HEAVISIDE_DOFS,
 )
 from .level_set import CutType
 
@@ -91,8 +91,10 @@ def cal_KgMg(
     xfem=False,
     tip_enrich=False,
     corrected=False,
-    skip_elements={},
+    skip_elements=None,
 ):
+    if skip_elements is None:
+        skip_elements = {}
     print("=> Start evaluating stiffness matrix:")
     # Kg_row_list = []
     # Kg_col_list = []
@@ -107,6 +109,9 @@ def cal_KgMg(
     if xfem:
         cut_info = model.cut_info
     for i_e, ele_info in enumerate(model.elements):
+        _row = i_e // 13
+        _col = i_e % 13
+
         if (ele_info[0]) in skip_elements:
             continue
         elem_type = ele_info[1]
@@ -121,6 +126,7 @@ def cal_KgMg(
         material = model.materials[mat_id - 1][1]
         real = model.reals[real_ie - 1][1]
         local_dofs_per_node = np.bitwise_or.reduce(elem_dofs)
+
         if xfem:
             h_enrich = local_dofs_per_node & HEAVISIDE_DOFS != 0
             if corrected:
@@ -172,6 +178,29 @@ def cal_KgMg(
                 elem = elem_func(elem_vertices, material, real)
         else:
             elem = elem_func(elem_vertices, material, real)
+
+        # target_rows = np.array([21, 21, 22, 22, 23, 23, 24, 24, 25, 25, 26, 26, 27, 28])
+        # target_cols = np.array([21, 20, 20, 19, 19, 18, 18, 17, 17, 16, 16, 15, 15, 15])
+        # target_rows = np.array([21, 21, 21, 21, 21, 21, 21])
+        # target_cols = np.array([21, 20, 19, 18, 17, 16, 15])
+        # target_indices = (target_rows - 1) * 41 + target_cols - 1
+        # if i_e in target_indices:
+        #     trace_file = open(f"trace_row_{i_e // 41 + 1}_col_{i_e % 41 + 1}.txt", "w")
+        #
+        #     # 2. Pass the file object to the stream argument
+        #     hunter.trace(
+        #         hunter.Q(module_startswith="tfealite"),
+        #         stdlib=False,
+        #         action=hunter.CallPrinter(stream=trace_file),
+        #     )
+        #
+        #     # 3. Execute your code
+        #     Ke, Me = elem.cal_element_matrices(eval_mass=eval_mass)
+        #
+        #     # 4. Stop tracing and close the file to ensure all output is written
+        #     hunter.stop()
+        #     trace_file.close()
+        # else:
         Ke, Me = elem.cal_element_matrices(eval_mass=eval_mass)
         DOFs = np.concatenate(
             (

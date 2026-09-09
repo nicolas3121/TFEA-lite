@@ -1,10 +1,11 @@
-import tfealite as tf
-from tfealite.visualization.build_mesh import (
-    my_build_Quad4n,
-    build_XQuad4n,
-)
 import numpy as np
 import pyvista as pv
+
+import tfealite as tf
+from tfealite.visualization.build_mesh import (
+    build_XQuad4n,
+    my_build_Quad4n,
+)
 
 
 def clean_and_average(mesh, decimals=5):

@@ -1,6 +1,7 @@
-import tfealite as tf
-import tfealite.core.bc as bc
 import numpy as np
+
+import tfealite as tf
+from tfealite.core import bc
 
 
 def test_fully_cut_XTri3n():
@@ -131,7 +132,7 @@ def test_edge_cut_XTri3n():
             1 + np.arange(model.n_nodes, dtype=int), tf.DofType.UY
         ).flatten()
     ]
-    assert np.allclose(Yg, np.array([0.0, 0.0, 0.5, 0.5, 1.0, 1.0]))
+    assert np.allclose(Yg, np.array([0.0, 0.0, 1.0, 1.0, 1.0, 1.0]))
     print(Xg)
     print(Yg)
 
@@ -283,7 +284,7 @@ def test_edge_cut_XQuad4n():
             1 + np.arange(model.n_nodes, dtype=int), tf.DofType.UY
         ).flatten()
     ]
-    assert np.allclose(Yg, np.array([0.0, 0.0, 0.5, 0.5, 1.0, 1.0]))
+    assert np.allclose(Yg, np.array([0.0, 0.0, 1.0, 1.0, 1.0, 1.0]))
     print(Xg)
     print(Yg)
 

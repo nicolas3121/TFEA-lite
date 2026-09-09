@@ -1,7 +1,8 @@
-import tfealite as tf
 import numpy as np
 from scipy.linalg import svdvals
-from tfealite.core.surfaces import init_crack_plane_geomdl, geomdl_to_NdBSplines
+
+import tfealite as tf
+from tfealite.core.surfaces import geomdl_to_NdBSplines, init_crack_plane_geomdl
 
 x_elem = 25
 

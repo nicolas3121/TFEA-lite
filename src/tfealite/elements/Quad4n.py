@@ -1,6 +1,7 @@
 import numpy as np
+
+from ..core.quadratures import BAR_RULES, QUAD_RULES
 from .utils import cal_B_2d_vec, cal_N_2d_vec
-from ..core.quadratures import QUAD_RULES, BAR_RULES
 
 
 class Quad4n:
@@ -8,7 +9,7 @@ class Quad4n:
         self.node_coords = node_coords
         self.E = material["E"]
         self.nu = material["nu"]
-        self.rho = material["rho"] if ("rho" in material) else 0.0
+        self.rho = material.get("rho", 0.0)
         self.t = real["t"]
 
         c1 = self.E / (1.0 - self.nu**2)

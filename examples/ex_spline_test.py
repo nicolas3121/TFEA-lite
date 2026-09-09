@@ -1,12 +1,12 @@
-import tfealite as tf
 import numpy as np
-from scipy.interpolate import splprep, BSpline
-from tfealite.visualization.build_mesh import (
-    my_build_Quad4n,
-    build_XQuad4n,
-)
 import pyvista as pv
+from scipy.interpolate import BSpline, splprep
 
+import tfealite as tf
+from tfealite.visualization.build_mesh import (
+    build_XQuad4n,
+    my_build_Quad4n,
+)
 
 nodes, elements = tf.gen_rect_Quad4n(1, 1, 40, 40)
 materials = [[1, {"E": 1, "nu": 0.33, "rho": 7850}]]

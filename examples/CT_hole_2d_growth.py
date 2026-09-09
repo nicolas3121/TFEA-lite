@@ -1,11 +1,11 @@
 import meshio
 import numpy as np
+import pyvista as pv
 from geomdl import knotvector
 from scipy.interpolate import BSpline
-import pyvista as pv
-from tfealite.core.sif import DisplacementCorrelationMethodSIF as DCMSIF
 
 import tfealite as tf
+from tfealite.core.sif import DisplacementCorrelationMethodSIF as DCMSIF
 from tfealite.visualization.build_mesh import (
     build_XQuad4n,
     my_build_Quad4n,

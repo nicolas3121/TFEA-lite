@@ -1,13 +1,14 @@
-import tfealite as tf
-from tfealite.visualization.build_mesh import (
-    my_build_Quad4n,
-    build_XQuad4n,
-)
-from tfealite import DofType
-from tfealite.core.sif import DisplacementCorrelationMethodSIF as DCMSIF
-from scipy.interpolate import splprep, BSpline
 import numpy as np
 import pyvista as pv
+from scipy.interpolate import BSpline, splprep
+
+import tfealite as tf
+from tfealite import DofType
+from tfealite.core.sif import DisplacementCorrelationMethodSIF as DCMSIF
+from tfealite.visualization.build_mesh import (
+    build_XQuad4n,
+    my_build_Quad4n,
+)
 
 
 def calculate_growth_direction(K_I, K_II):

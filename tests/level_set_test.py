@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
-from tfealite.core.level_set import LevelSet, CutType
+
+from tfealite.core.level_set import CutType, LevelSet
 
 POINTS_DATA_INSIDE_FULL_TRI3N = [
     ([0.0, 0.5], [1.2, 0.6]),
@@ -173,7 +174,7 @@ def test_is_touching_Quad4n(p1_coord, p2_coord, answer):
     p2 = np.array(p2_coord)
     ls = LevelSet()
     ls.gen_from_line_segment(nodes, p1, p2, embedded=False)
-    cut, tip, touching = ls.is_cut(elements[0])
+    _cut, _tip, touching = ls.is_cut(elements[0])
     assert touching == answer
 
 

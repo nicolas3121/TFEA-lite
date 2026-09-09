@@ -1,7 +1,8 @@
 import numpy as np
-from .dofs import DofType
+
 from .dofs import (
     BASE_DOFS,
+    DofType,
 )
 
 

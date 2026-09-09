@@ -1,10 +1,11 @@
-import tfealite as tf
+import matplotlib.pyplot as plt
+import numpy as np
+import scipy as sp
 from geomdl import knotvector
 from scipy.interpolate import BSpline
-import scipy as sp
-import numpy as np
-from tfealite.core.dofs import HEAVISIDE_DOFS, BRANCH_DOFS, BASE_DOFS
-import matplotlib.pyplot as plt
+
+import tfealite as tf
+from tfealite.core.dofs import BASE_DOFS, BRANCH_DOFS, HEAVISIDE_DOFS
 
 
 def cal_approx_coeff(model):
@@ -423,7 +424,7 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False):
             ha="center",
             va="center",
             fontsize=11,
-            arrowprops=dict(arrowstyle="->", color="black", shrinkA=0, shrinkB=6),
+            arrowprops={"arrowstyle": "->", "color": "black", "shrinkA": 0, "shrinkB": 6},
         )
 
 
@@ -503,14 +504,6 @@ plt.legend(
 )
 
 plt.xticks(h_vals, labels=[f"{h:.3f}" for h in h_vals])
-# Set x-axis ticks to show the exact h_vals, formatted to 3 decimal places
-# plt.xticks(
-#     h_vals,
-#     labels=[f"{h:.3f}" for h in h_vals],
-#     rotation=45,
-#     ha="right",  # Aligns the end of the text with the tick mark
-#     rotation_mode="anchor",  # Ensures it rotates exactly around the tick
-# )
 
 plt.tight_layout()
 plt.savefig("scn_corrected_annotated.pdf", dpi=300, bbox_inches="tight")

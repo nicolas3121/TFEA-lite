@@ -1,10 +1,11 @@
-import tfealite as tf
+import matplotlib.pyplot as plt
+import numpy as np
+import scipy as sp
 from geomdl import knotvector
 from scipy.interpolate import BSpline
-import scipy as sp
-import numpy as np
-from tfealite.core.dofs import HEAVISIDE_DOFS, BRANCH_DOFS, BASE_DOFS
-import matplotlib.pyplot as plt
+
+import tfealite as tf
+from tfealite.core.dofs import BASE_DOFS, BRANCH_DOFS, HEAVISIDE_DOFS
 
 
 def cal_approx_coeff(model):
@@ -362,7 +363,7 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False):
             ha="center",
             va="center",
             fontsize=11,
-            arrowprops=dict(arrowstyle="->", color="black", shrinkA=0, shrinkB=6),
+            arrowprops={"arrowstyle": "->", "color": "black", "shrinkA": 0, "shrinkB": 6},
         )
 
 

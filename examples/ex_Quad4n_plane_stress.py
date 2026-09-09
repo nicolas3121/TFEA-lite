@@ -1,5 +1,6 @@
-import tfealite as tf
 import numpy as np
+
+import tfealite as tf
 
 # %% Model creation
 nodes, elements = tf.gen_rect_Quad4n(L=1.0, H=1.0)

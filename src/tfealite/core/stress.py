@@ -1,7 +1,8 @@
 import numpy as np
+
 from ..elements.Quad4n import Quad4n
-from ..elements.Tri3n import Tri3n
 from ..elements.Tetr4n import Tetr4n
+from ..elements.Tri3n import Tri3n
 from .dofs import DofType
 
 
@@ -112,7 +113,7 @@ def eval_node_average(model, sxx):
     stress_sum = np.zeros(n_nodes, dtype=float)
     vol_sum = np.zeros(n_nodes, dtype=float)
     for e, elem in enumerate(elements):
-        eid, etype, mat_id, real_id, conn = elem
+        _eid, _etype, _mat_id, _real_id, conn = elem
         n1, n2, n3, n4 = conn
         i1, i2, i3, i4 = nid2idx[n1], nid2idx[n2], nid2idx[n3], nid2idx[n4]
         X = nodes[[i1, i2, i3, i4], 1:4].astype(float)

@@ -1,15 +1,17 @@
-from .Tetr4n import Tetr4n
-import numpy as np
 from typing import Final
+
+import numpy as np
+
 from ..core import quadratures as qd
 from ..core.quadratures import DuffySinh3D
+from .Tetr4n import Tetr4n
 from .utils import (
+    ELEM_EDGES,
     cal_B_3d_vec,
     cut_embedding_tetr_iter,
     enriched_shape_functions,
-    partial_cut_embedding_tetr_iter,
-    ELEM_EDGES,
     jump_shape_functions,
+    partial_cut_embedding_tetr_iter,
 )
 
 
@@ -67,8 +69,10 @@ class XTetr4n(Tetr4n):
         h_enrich: bool,
         t_enrich: bool,
         partial_cut: bool,
-        in_range=np.ones(4, dtype=bool),
+        in_range=None,
     ):
+        if in_range is None:
+            in_range = (np.ones(4, dtype=bool),)
         super().__init__(node_coords, material, real)
         self.phi_n = phi_n
         self.phi_t = phi_t
@@ -226,7 +230,9 @@ class XTetr4n(Tetr4n):
                 rule, correction = qd.TETR_RULES[13]
             else:
                 rule, correction = qd.TETR_RULES[2]
+            # total_weight = 0
             for Ni, detJi in cut_embedding_tetr_iter(Nc, kappa):
+                # total_weight += detJi
                 n, _ = self._base_shape_functions(rule[:, :3].T)
                 sub_nat_coords = self.NAT_COORDS.T @ Ni @ n.T
                 _, dN_dxi_sub = self.shape_functions(sub_nat_coords)
@@ -237,6 +243,7 @@ class XTetr4n(Tetr4n):
                 Ke[:, :] += np.sum(
                     (B.transpose(0, 2, 1) @ D @ B) * w_eff[:, None, None], axis=0
                 )
+            # print("full cut", total_weight)
         else:
             (rule, correction) = qd.TETR_RULES[13]
             nat_coords = rule[:, :3]
@@ -259,11 +266,13 @@ class XTetr4n(Tetr4n):
         Nc, _ = self._cal_intersections()
         tip, tip_on_interface = self._cal_front_intersections()
         (rule, correction) = qd.UNIT_HEX_RULES[10]
+        # total_weight = 0
         for Ni, detJi, n_on_interface in partial_cut_embedding_tetr_iter(
             Nc, tip, tip_on_interface
         ):
             if detJi < 0:
                 print("DetJi smaller than 0")
+            # total_weight += detJi
             x_e_i = (x_e.T @ Ni).T
             duffy = DuffySinh3D(x_e_i)
             rule_d = duffy.transform(rule[:, :3].T, beta1=1, beta2=1)
@@ -298,6 +307,7 @@ class XTetr4n(Tetr4n):
             )
             Ke[0:begin_tip, begin_tip:] += res
             Ke[begin_tip:, 0:begin_tip] += res.T
+        # print("partial_cut", total_weight)
         # print("w_eff tot split", w_eff_tot)
 
     def shape_functions(self, natural_coordinate):
@@ -372,7 +382,7 @@ class XTetr4n(Tetr4n):
     #     return closest_pts, nat_coords
 
     def nearest_point_on_crack(self, coords, tip_pos, tip_b):
-        Nc, kappa = self._cal_intersections()
+        Nc, _kappa = self._cal_intersections()
         phi_n_at_intersections = self.phi_n @ Nc
         on_crack = np.isclose(phi_n_at_intersections, 0.0, atol=1e-12)
 

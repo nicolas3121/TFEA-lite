@@ -1,21 +1,22 @@
 import numpy as np
 import pyvista as pv
 from pyvista import CellType
-from ..core.dofs import DofType, BASE_DOFS, HEAVISIDE_DOFS, BRANCH_DOFS
+
+from ..core.dofs import BASE_DOFS, BRANCH_DOFS, HEAVISIDE_DOFS, DofType
+from ..core.level_set import CutType
+from ..elements.Quad4n import Quad4n
+from ..elements.Tetr4n import Tetr4n
+from ..elements.Tri3n import Tri3n
 from ..elements.utils import (
-    cut_embedding_tri_iter,
     cut_embedding_tetr_iter,
-    partial_cut_embedding_tri_iter,
-    partial_cut_embedding_tetr_iter,
+    cut_embedding_tri_iter,
     fill_element_displacement,
+    partial_cut_embedding_tetr_iter,
+    partial_cut_embedding_tri_iter,
 )
 from ..elements.XQuad4n import XQuad4n
-from ..elements.Quad4n import Quad4n
 from ..elements.XTetr4n import XTetr4n
 from ..elements.XTri3n import XTri3n
-from ..elements.Tri3n import Tri3n
-from ..elements.Tetr4n import Tetr4n
-from ..core.level_set import CutType
 
 DOF_TYPES = np.array(
     [
@@ -147,23 +148,47 @@ def build_XQuad4n(model, mult=1.0):
         displacements,
         stresses,
     ):
-        for Ni, _ in tri_iterator:
-            centroid = np.mean(Ni, axis=1, keepdims=True)
-            Ni = centroid + (Ni - centroid) * 0.999
-
-            sub_nat_x_e = Ni.T @ nat_x_e
-            sub_shape_funcs = elem.shape_functions(sub_nat_x_e.T)[0]
-
-            sub_phi_t = np.sum(sub_shape_funcs[:, :4] * phi_t[None, :], axis=1)
-
-            sub_vertices = sub_shape_funcs[:, :4] @ elem_vertices
-            node_disps = sub_shape_funcs @ Ue
-
-            in_front = np.where((sub_phi_t > 0) & ~np.isclose(sub_phi_t, 0, atol=1e-4))[
-                0
+        xi_shrunk = np.array(
+            [
+                0.00333333,
+                0.99333333,
+                0.00333333,
             ]
+        )
+        eta_shrunk = np.array(
+            [
+                0.00333333,
+                0.00333333,
+                0.99333333,
+            ]
+        )
+        for Ni, detJi in tri_iterator:
+            nat_sub_x_e = nat_x_e.T @ Ni
+            N, _ = elem._base_shape_functions(nat_sub_x_e)
+            sub_phi_n = N @ elem.phi_n
+
+            nat_coords_sub, _detJi_mod, sign = elem._get_mapped_coords(
+                xi_shrunk,
+                eta_shrunk,
+                sub_phi_n,
+                True,
+                nat_sub_x_e,
+                detJi,
+                False,
+            )
+
+            N, _dN_dxi_sub = elem.shape_functions(nat_coords_sub, enforce_sign=sign)
+
+            sub_phi_t = np.sum(N[:, :4] * phi_t[None, :], axis=1)
+
+            sub_vertices = N[:, :4] @ elem_vertices
+            node_disps = N @ Ue
+
+            in_front = np.where(
+                (sub_phi_t >= 0) & ~np.isclose(sub_phi_t, 0, atol=1e-2)
+            )[0]
             if len(in_front) > 0:
-                node_disps[in_front, :] = sub_shape_funcs[in_front, :4] @ Ue[:4, :]
+                node_disps[in_front, :] = N[in_front, :4] @ Ue[:4, :]
 
             n_points = point_offset[0]
             faces.extend([3, n_points, n_points + 1, n_points + 2])
@@ -172,7 +197,7 @@ def build_XQuad4n(model, mult=1.0):
             points_ref.append(sub_vertices)
             displacements.append(node_disps)
 
-            stresses.append(elem.cal_stresses(sub_nat_x_e.T, Ue))
+            stresses.append(elem.cal_stresses(nat_coords_sub, Ue))
 
     def build_quad(Ue, elem_vertices, elem, points_ref, faces, displacements, stresses):
         sub_vertices = elem_vertices
@@ -463,7 +488,7 @@ def build_XTetr4n(model, mult=1.0):
 
     for elem_id, (_, cut_type, _) in cut_info.items():
         element = model.elements[elem_id - 1]
-        _, _, mat_id, real_id, elem_nodes = element
+        _, _, mat_id, _real_id, elem_nodes = element
         elem_nodes = np.asarray(elem_nodes)
 
         elem_dofs = model.list_dof.get_elem_dofs(elem_nodes)
@@ -598,7 +623,7 @@ def my_build_Tetr4n(model, mult=1.0):
     node_counts = np.zeros(num_nodes, dtype=int)
 
     for i, element in enumerate(model.elements):
-        eid, _, mat_id, real_id, elem_nodes = element
+        eid, _, mat_id, _real_id, elem_nodes = element
         elem_nodes_idx = np.asarray(elem_nodes) - 1
 
         faces[i, 0] = 4
@@ -852,7 +877,7 @@ def build_XTri3n(model, mult=1.0):
             Nc = elem._cal_intersections()
 
             if partial_cut:
-                xi_tip, eta_tip = elem._cal_tip_nat_coords()
+                _xi_tip, _eta_tip = elem._cal_tip_nat_coords()
                 tip = np.linalg.solve(
                     np.array([elem.phi_t, elem.phi_n, [1, 1, 1]]), np.array([0, 0, 1])
                 )

@@ -1,6 +1,8 @@
-import numpy as np
-from .dofs import DofList
 from collections import Counter
+
+import numpy as np
+
+from .dofs import DofList
 
 
 def model_print(model):
@@ -208,9 +210,7 @@ def gen_ibeam_Tetr4n(L, h, bf, tw, tf, nx=50, ny_f=4, ny_w=1, nz_f=1, nz_w=10):
             in_web_z = (z0 >= tf - eps) and (z1_ <= h - tf + eps)
             in_web_y = (y0 >= -tw / 2 - eps) and (y1_ <= tw / 2 + eps)
             inside = False
-            if in_bottom_flange or in_top_flange:
-                inside = True
-            elif in_web_z and in_web_y:
+            if in_bottom_flange or in_top_flange or in_web_z and in_web_y:
                 inside = True
             if not inside:
                 continue

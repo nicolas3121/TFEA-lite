@@ -1,5 +1,6 @@
-import tfealite as tf
 import numpy as np
+
+import tfealite as tf
 
 nodes, elements = tf.gen_rect_Tri3n(1, 1, 11, 11)
 materials = [[1, {"E": 1, "nu": 0.33, "rho": 7850}]]

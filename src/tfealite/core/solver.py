@@ -2,7 +2,9 @@ import numpy as np
 import scipy as sp
 
 
-def static(model, Fg=[]):
+def static(model, Fg=None):
+    if Fg is None:
+        Fg = []
     print("=> Static solver started:")
     if hasattr(model, "Fg") and len(Fg) == 0:
         Fg = model.Fg

@@ -1,8 +1,7 @@
 import numpy as np
-from .core import model
-from .core import bc
-from .core import load
+
 from .core import assembly as asm
+from .core import bc, load, model
 from .core import solver as sol
 from .core import stress as sts
 from .visualization import visualization as vis
@@ -53,7 +52,9 @@ class FEModel:
             self, sel_condition, traction_expression, elem, deg, tol=tol, reset=reset
         )
 
-    def solve_static(self, Fg=[]):
+    def solve_static(self, Fg=None):
+        if Fg is None:
+            Fg = []
         sol.static(self, Fg=Fg)
 
     def solve_modal(self, tol=1e-3, return_eigs=False, num_eigs=15, sigma=1e-6):

@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.sparse as sps
 import sympy as sp
 from scipy.sparse.linalg import spsolve
-import scipy.sparse as sps
 
 import tfealite as tf
 import tfealite.core.quadratures as qd
@@ -46,9 +46,9 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False, color="
             va="center",
             fontsize=10,
             color=color,
-            arrowprops=dict(
-                arrowstyle="->", color=color, shrinkA=0, shrinkB=5, alpha=0.7
-            ),
+            arrowprops={
+                "arrowstyle": "->", "color": color, "shrinkA": 0, "shrinkB": 5, "alpha": 0.7
+            },
         )
 
 

@@ -83,8 +83,8 @@
 # plot_element_level_set(my_element_nodes)
 
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 # ==========================================
 # 1. YOUR XFEM ALGORITHMS (Adapted for standalone use)
@@ -191,7 +191,7 @@ def plot_element_with_subtriangles(phi_nodes):
     cp = plt.contourf(
         XI, ETA, PHI, levels=50, cmap="RdBu_r", vmin=-max_val, vmax=max_val, alpha=0.5
     )
-    plt.colorbar(cp, label="Interpolated Normal Distance ($\phi_n$)")
+    plt.colorbar(cp, label=r"Interpolated Normal Distance ($\phi_n$)")
 
     # The true mathematical zero-crossing
     plt.contour(XI, ETA, PHI, levels=[0.0], colors="black", linewidths=4, zorder=2)
@@ -244,7 +244,7 @@ def plot_element_with_subtriangles(phi_nodes):
             fontsize=9,
             ha="center",
             va="center",
-            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=1),
+            bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none", "pad": 1},
         )
 
     # --- 3. Format Plot ---
@@ -256,12 +256,12 @@ def plot_element_with_subtriangles(phi_nodes):
         plt.text(
             x * 1.1,
             y * 1.1,
-            f"Node {i + 1}\n$\phi$={phi_nodes[i]:.2f}",
+            f"Node {i + 1}\n$\\phi$={phi_nodes[i]:.2f}",
             ha=ha,
             va=va,
             fontsize=10,
             weight="bold",
-            bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray"),
+            bbox={"facecolor": "white", "alpha": 0.9, "edgecolor": "gray"},
         )
 
     plt.xlim(-1.4, 1.4)

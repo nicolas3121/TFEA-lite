@@ -1,8 +1,10 @@
-from .XFEModel import XFEModel
+import csv
+
 import numpy as np
 from geomdl import knotvector
 from scipy.interpolate import BSpline
-import csv
+
+from .XFEModel import XFEModel
 
 
 class GrowthController:

@@ -1,8 +1,8 @@
 import numpy as np
 import pyvista as pv
 
-from . import build_mesh as bm
 from ..core.dofs import DofType
+from . import build_mesh as bm
 
 
 def build_gcs(model, length=1.0):
@@ -60,7 +60,7 @@ def show(
     def _add_element_mesh(mesh, has_stress=False):
         if mesh is None or not do_plot:
             return
-        base_kwargs = dict(show_edges=show_edges, edge_color=(0.2, 0.2, 0.2))
+        base_kwargs = {"show_edges": show_edges, "edge_color": (0.2, 0.2, 0.2)}
         if not has_stress or node_stress is None:
             pl.add_mesh(
                 mesh,

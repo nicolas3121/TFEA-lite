@@ -1,10 +1,10 @@
 from enum import Enum, auto
-from typing import Tuple
 
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.interpolate import BSpline, splprep
 from scipy.spatial import KDTree
+
 from ..elements.utils import ELEM_EDGES
 
 
@@ -40,7 +40,7 @@ class LevelSet:
         phi_t2 = np.sum((coordinates - p1) * t1, axis=1)
 
         pts = np.linspace(p1, p2, 4).T
-        tck, u = splprep(pts, s=0, k=3)
+        tck, _u = splprep(pts, s=0, k=3)
         bspline = BSpline(tck[0], np.transpose(tck[1]), tck[2])
         self.bspline = bspline
 
@@ -178,9 +178,9 @@ class LevelSet:
             cal_near_tip(t2_pt, 0.0, 1, indices_near_tip2, phi_t2)
             self.phi_t_list.append(phi_t2)
 
-        to_snap = np.where(
-            (np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h))
-        )[0]
+        to_snap = np.where(np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h))[
+            0
+        ]
         global_to_snap = indices_subset[to_snap]
 
         signs = np.where(phi_n_subset[to_snap] >= 0, 1.0, -1.0)
@@ -222,7 +222,7 @@ class LevelSet:
                 ndbspline,
                 num_segments_u=3 * ndbspline.c.shape[0],
                 num_segments_v=3 * ndbspline.c.shape[1],
-                padding=2 * h,
+                padding=5 * h,
             )
             num_u_points = max(100, 3 * ndbspline.c.shape[0])
             num_v_points = max(100, 3 * ndbspline.c.shape[1])
@@ -408,7 +408,7 @@ class LevelSet:
             phi_t = None
         return phi_n, phi_t
 
-    def is_cut(self, element) -> Tuple[CutType, None | int, bool]:
+    def is_cut(self, element) -> tuple[CutType, None | int, bool]:
         assert self.phi_n is not None
         assert self.phi_t_list is not None
 

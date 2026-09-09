@@ -1,13 +1,13 @@
 import numpy as np
+import pyvista as pv
 
 import tfealite as tf
 from tfealite.core.sif import DisplacementCorrelationMethodSIF3D as DCMSIF3D
-from tfealite.core.surfaces import init_crack_plane_geomdl, geomdl_to_NdBSplines
+from tfealite.core.surfaces import geomdl_to_NdBSplines, init_crack_plane_geomdl
 from tfealite.visualization.build_mesh import (
-    my_build_Tetr4n,
     build_XTetr4n,
+    my_build_Tetr4n,
 )
-import pyvista as pv
 
 E_mod = 200e9
 nu = 0.3

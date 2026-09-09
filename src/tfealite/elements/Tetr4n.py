@@ -1,4 +1,5 @@
 import numpy as np
+
 from ..core import quadratures as qd
 from .utils import (
     cal_B_3d_vec,

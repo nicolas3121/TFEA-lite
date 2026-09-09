@@ -1,4 +1,5 @@
 import numpy as np
+
 from tfealite.elements.XQuad4n import XQuad4n
 
 
@@ -17,7 +18,7 @@ def test_rigid_body_modes_fully_cut():
         False,
     )
     Ke, _ = quad.cal_element_matrices(eval_mass=False)
-    eigenvalues = np.abs(np.linalg.eigvals(Ke)[0])
+    eigenvalues = np.abs(np.linalg.eigvals(Ke))
 
     # Sort eigenvalues to find the smallest ones
     eigenvalues.sort()

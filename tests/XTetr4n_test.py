@@ -1,7 +1,8 @@
 import numpy as np
 import sympy as sp
-from tfealite.elements.XTetr4n import XTetr4n
+
 from tfealite.core.quadratures import DuffySinh3D
+from tfealite.elements.XTetr4n import XTetr4n
 
 
 def test_rigid_body_modes_fully_cut():
@@ -153,7 +154,7 @@ def test_duffy_3d_edge_singularity():
     duffy = DuffySinh3D(nodes_phys)
 
     # 5. Transform points (beta1=1, beta2=1 perfectly resolves 1/rho)
-    xi, eta, zeta, j_ddt = duffy.transform(nat_coords, beta1=1, beta2=1)
+    _xi, eta, zeta, j_ddt = duffy.transform(nat_coords, beta1=1, beta2=1)
 
     # 6. Map Natural Points to Physical Space
     # x_phys = nodes_phys[1, 0] * xi

@@ -1,16 +1,17 @@
+import numpy as np
+import pyvista as pv
+
 import tfealite as tf
+from tfealite.core.level_set import LevelSet
 from tfealite.core.surfaces import (
+    geomdl_to_NdBSplines,
     # init_half_coin_crack_geomdl,
     init_crack_plane_geomdl,
-    geomdl_to_NdBSplines,
 )
-from tfealite.core.level_set import LevelSet
-import numpy as np
 from tfealite.visualization.build_mesh import (
-    my_build_Tetr4n,
     build_XTetr4n,
+    my_build_Tetr4n,
 )
-import pyvista as pv
 
 # %% Model creation
 nodes, elements = tf.gen_rect_Tetr4n(L=1.0, H=1.0, D=1.0, nx=20, ny=20, nz=20)

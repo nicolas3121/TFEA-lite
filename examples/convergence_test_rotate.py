@@ -1,16 +1,11 @@
 import matplotlib.pyplot as plt
+import numpy as np
+import pyvista as pv
+import scipy.sparse as sps
+import sympy as sp
 from geomdl import knotvector
 from scipy.interpolate import BSpline
-import numpy as np
-import sympy as sp
 from scipy.sparse.linalg import spsolve
-import scipy.sparse as sps
-
-import pyvista as pv
-from tfealite.visualization.build_mesh import (
-    my_build_Quad4n,
-    build_XQuad4n,
-)
 
 import tfealite as tf
 import tfealite.core.quadratures as qd
@@ -22,6 +17,10 @@ from tfealite.elements.utils import (
     cut_embedding_tri_iter,
     fill_element_displacement,
     partial_cut_embedding_tri_iter,
+)
+from tfealite.visualization.build_mesh import (
+    build_XQuad4n,
+    my_build_Quad4n,
 )
 
 
@@ -47,9 +46,13 @@ def annotate_local_slopes(x_vals, y_vals, ax, text_offset, x_is_h=False, color="
             va="center",
             fontsize=10,
             color=color,
-            arrowprops=dict(
-                arrowstyle="->", color=color, shrinkA=0, shrinkB=5, alpha=0.7
-            ),
+            arrowprops={
+                "arrowstyle": "->",
+                "color": color,
+                "shrinkA": 0,
+                "shrinkB": 5,
+                "alpha": 0.7,
+            },
         )
 
 
@@ -398,7 +401,7 @@ def test_pure_mode_1_analytical_benchmark(
     bspline = BSpline(knots, np.array(control_points), k)
 
     model.insert_crack_spline(
-        bspline, embedded=False, h=10 / x_elem, snapping_tolerance=0.5
+        bspline, embedded=False, h=10 / x_elem, snapping_tolerance=0.05
     )
 
     model.gen_list_dof(dof_per_node=tf.IS_2D)
@@ -505,6 +508,7 @@ def test_pure_mode_1_analytical_benchmark(
             show_edges=True,
             clim=[0, v_max],
             scalar_bar_args={"title": "Von Mises Stress"},
+            show_scalar_bar=False,
         )
 
         pl.view_xy()
@@ -580,9 +584,10 @@ def test_pure_mode_1_analytical_benchmark(
 
 def run_convergence_study(crack_angle=0.0):
     # mesh_sizes = [21, 33, 41, 51, 61, 81, 101, 121, 161]
-    mesh_sizes = np.array([11, 21, 31, 41, 61, 81, 121, 161])
+    # mesh_sizes = np.array([11, 21, 31, 41, 61, 81, 121, 161])
     # mesh_sizes = [40, 41, 42]
-    h_vals = [1.0 / n for n in mesh_sizes]
+    mesh_sizes = [21, 33, 41, 51, 61]
+    h_vals = [10.0 / n for n in mesh_sizes]
 
     errors_uncorrected = []
     errors_corrected = []
@@ -745,5 +750,5 @@ if __name__ == "__main__":
     #     41, 41, True, crack_angle=-np.pi / 4, plot=True
     # )
 
-    # Test 2: Run the full convergence study at 45 degrees
-    run_convergence_study(crack_angle=0.0)
+    # # Test 2: Run the full convergence study at 45 degrees
+    run_convergence_study(crack_angle=-np.pi / 4)

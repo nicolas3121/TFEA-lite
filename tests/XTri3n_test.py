@@ -1,12 +1,13 @@
 import numpy as np
 import sympy as sp
-from tfealite.elements.XTri3n import XTri3n
+
+import tfealite.core.quadratures as qd
 from tfealite.core.quadratures import (
-    GeneralizedDuffy,
     DuffyDistance,
     DuffySinh,
+    GeneralizedDuffy,
 )
-import tfealite.core.quadratures as qd
+from tfealite.elements.XTri3n import XTri3n
 
 
 def test_rigid_body_modes_fully_cut():
@@ -156,10 +157,10 @@ def integrate_singular_distorted_sympy(nodes):
     Computes ground truth: Integral of 1/sqrt(x^2 + y^2) over a triangle.
     Singularity is assumed to be at nodes[0] which is (0,0).
     """
-    x, y = sp.symbols("x y")
+    _x, _y = sp.symbols("x y")
     # For 1/r, the polar integrand is (1/r) * r = 1.
     # So we are essentially integrating 1 * dr * dtheta.
-    r, theta = sp.symbols("r theta", positive=True)
+    _r, theta = sp.symbols("r theta", positive=True)
 
     # Calculate angular bounds for the two edges meeting at the origin
     theta_start = np.arctan2(nodes[1][1], nodes[1][0])

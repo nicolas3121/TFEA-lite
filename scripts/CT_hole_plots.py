@@ -1,17 +1,29 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.patches import Circle, PathPatch
 from matplotlib.path import Path
 from scipy.interpolate import BSpline
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 # 1. Configuration
 specimen_params = {
-    "CT01": {"K": 8.3, "C": 8.1},
-    "CT02": {"K": 8.4, "C": 6.9},
-    "CT03": {"K": 8.1, "C": 8.1},
-    "CT04": {"K": 7.7, "C": 6.7},
+    "CTS01": {"K": 8.3, "C": 8.1},
+    "CTS02": {"K": 8.4, "C": 6.9},
+    "CTS03": {"K": 8.1, "C": 8.1},
+    "CTS04": {"K": 7.7, "C": 6.7},
 }
+cut_off_iter = {
+    "CTS01": 95,
+    "CTS02": 75,
+    "CTS03": 95,
+    "CTS04": 75,
+}
+percentage = {
+    "CTS01": 85,
+    "CTS02": 75,
+    "CTS03": 85,
+    "CTS04": 75,
+}
+
 
 data_dir = "./"
 W, H = 40.0, 40.0
@@ -66,7 +78,7 @@ for i in range(1, 5):
         predicted_2018 = np.genfromtxt(
             f"{data_dir}{name}_predicted_miranda_2018.csv", delimiter=","
         )
-        current_specimen = name
+        current_specimen = f"CTS0{i}"
         break
     except OSError:
         continue
@@ -74,9 +86,16 @@ for i in range(1, 5):
 assert current_specimen is not None
 
 # --- Simulation Logic (Corrected Alignment) ---
-sim_raw = np.genfromtxt("failed_growth_splines.csv", delimiter=",", skip_header=1)
+try:
+    sim_raw = np.genfromtxt("failed_growth_splines.csv", delimiter=",", skip_header=1)
+except OSError:
+    sim_raw = np.genfromtxt(
+        "successful_growth_splines.csv", delimiter=",", skip_header=1
+    )
+
 last_iter = np.max(sim_raw[:, 0])
 last_iter_data = sim_raw[sim_raw[:, 0] == last_iter, 2:4]
+last_iter_data = last_iter_data[: cut_off_iter[current_specimen]]
 
 last_iter_data -= last_iter_data[0, :]
 last_iter_data[:, 0] -= 3
@@ -101,40 +120,50 @@ for arr in [experimental, predicted_2003, predicted_2018]:
     arr[:, 0] += notch_tip_x
 
 # 4. Final Plotting
-fig, ax = plt.subplots(figsize=(12, 10))
+fig, ax = plt.subplots(figsize=(5, 5))
 plot_specimen_outline(ax, specimen_params[current_specimen])
 
 ax.plot(experimental[:, 0], experimental[:, 1], "k-", label="Experimental")
 ax.plot(predicted_2003[:, 0], predicted_2003[:, 1], "b--", label="Miranda 2003")
 ax.plot(predicted_2018[:, 0], predicted_2018[:, 1], "g-.", label="Miranda 2018")
-ax.plot(x_sim, y_sim, "r-", linewidth=2.5, label="My Prediction", zorder=5)
+ax.plot(x_sim, y_sim, "r-", linewidth=2.5, label="Present work", zorder=5)
 
 # --- 5. ZOOM INSET (Bigger and Tighter) ---
 # Width/Height increased to 50% for a larger box
-ax_ins = inset_axes(ax, width="50%", height="50%", loc="lower right", borderpad=1.5)
-ax_ins.set_aspect("equal")
+# ax_ins = inset_axes(ax, width="75%", height="75%", loc="lower right", borderpad=1.5)
 
-plot_specimen_outline(
-    ax_ins, specimen_params[current_specimen], lw=0.5, color="#e0e0e0"
-)
-ax_ins.plot(experimental[:, 0], experimental[:, 1], "k-", lw=1.5)
-ax_ins.plot(predicted_2003[:, 0], predicted_2003[:, 1], "b--", lw=1.2)
-ax_ins.plot(predicted_2018[:, 0], predicted_2018[:, 1], "g-.", lw=1.2)
-ax_ins.plot(x_sim, y_sim, "r-", linewidth=2.5, zorder=5)
-
-# ZOOM SETTINGS
-# Reduced padding to 0.75mm to "zoom in more" on the crack path
-padding = 0.75
-ax_ins.set_xlim(np.min(x_sim) - padding, np.max(x_sim) + padding)
-ax_ins.set_ylim(np.min(y_sim) - padding, np.max(y_sim) + padding)
-
-# Hide ticks for a clean look
-ax_ins.tick_params(labelleft=False, labelbottom=False)
-
-# Connectors
-mark_inset(
-    ax, ax_ins, loc1=2, loc2=4, fc="none", ec="0.5", lw=1, linestyle="--", alpha=0.6
-)
+# ax_ins = inset_axes(
+#     ax,
+#     width=f"{percentage[current_specimen]}%",
+#     height=f"{percentage[current_specimen]}%",
+#     loc="lower right",
+#     bbox_to_anchor=(-0.01, -0.1, 1, 1),
+#     bbox_transform=ax.transAxes,
+#     borderpad=0,
+# )
+# ax_ins.set_aspect("equal")
+#
+# plot_specimen_outline(
+#     ax_ins, specimen_params[current_specimen], lw=0.5, color="#e0e0e0"
+# )
+# ax_ins.plot(experimental[:, 0], experimental[:, 1], "k-", lw=1.5)
+# ax_ins.plot(predicted_2003[:, 0], predicted_2003[:, 1], "b--", lw=1.2)
+# ax_ins.plot(predicted_2018[:, 0], predicted_2018[:, 1], "g-.", lw=1.2)
+# ax_ins.plot(x_sim, y_sim, "r-", linewidth=2.5, zorder=5)
+#
+# # ZOOM SETTINGS
+# # Reduced padding to 0.75mm to "zoom in more" on the crack path
+# padding = 0.6
+# ax_ins.set_xlim(np.min(x_sim) - padding, np.max(x_sim) + padding)
+# ax_ins.set_ylim(np.min(y_sim) - padding, np.max(y_sim) + padding)
+#
+# # Hide ticks for a clean look
+# ax_ins.tick_params(labelleft=False, labelbottom=False)
+#
+# # Connectors
+# mark_inset(
+#     ax, ax_ins, loc1=2, loc2=4, fc="none", ec="0.5", lw=1, linestyle="--", alpha=0.6
+# )
 
 # Main Axis Formatting
 ax.set_aspect("equal")
@@ -146,4 +175,43 @@ ax.set_ylabel("y (mm)", fontsize=12)
 ax.set_title(f"MCTS Crack Path Comparison: {current_specimen}", fontsize=14)
 
 plt.grid(True, linestyle=":", alpha=0.4)
+plt.savefig(f"MCTS_path_{current_specimen}.pdf")
+
+fig, ax = plt.subplots(figsize=(6, 7))  # Adjusted ratio for the zoomed view
+plot_specimen_outline(ax, specimen_params[current_specimen])
+
+ax.plot(experimental[:, 0], experimental[:, 1], "k-", label="Experimental")
+ax.plot(predicted_2003[:, 0], predicted_2003[:, 1], "b--", label="Miranda 2003")
+ax.plot(predicted_2018[:, 0], predicted_2018[:, 1], "g-.", label="Miranda 2018")
+ax.plot(x_sim, y_sim, "r-", linewidth=2.5, label="Present work", zorder=5)
+
+# Calculate dynamic limits to encompass the crack AND the upper hole
+params = specimen_params[current_specimen]
+hole_x = notch_tip_x + params["K"]
+hole_y = params["C"]
+hole_r = 3.5
+
+# Find the bounding box that captures everything we want to see
+x_min = min(np.min(x_sim), notch_tip_x) - 1.5
+x_max = max(np.max(x_sim), hole_x + hole_r) + 2.0
+y_min = np.min(y_sim) - 2.5
+y_max = max(np.max(y_sim), hole_y + hole_r) + 2.0
+
+ax.set_xlim(x_min, x_max)
+ax.set_ylim(y_min, y_max)
+ax.set_aspect("equal")
+
+# Formatting
+ax.legend(loc="upper left", fontsize=18)
+ax.set_xlabel("x (mm)", fontsize=18)
+ax.set_ylabel("y (mm)", fontsize=18)
+
+
+ax.tick_params(axis="both", which="major", labelsize=14)
+
+ax.set_title(f"MCTS Crack Path Comparison: {current_specimen}", fontsize=22)
+
+plt.grid(True, linestyle=":", alpha=0.4)
+plt.tight_layout()
+plt.savefig(f"MCTS_path_zoomed_{current_specimen}.pdf", dpi=300)
 plt.show()

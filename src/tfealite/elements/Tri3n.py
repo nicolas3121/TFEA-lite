@@ -1,5 +1,7 @@
-import numpy as np
 from typing import Final
+
+import numpy as np
+
 from .utils import cal_B_2d_vec
 
 NODES: Final = 3
@@ -12,7 +14,7 @@ class Tri3n:
         self.node_coords = node_coords
         self.E = material["E"]
         self.nu = material["nu"]
-        self.rho = material["rho"] if ("rho" in material) else 0.0
+        self.rho = material.get("rho", 0.0)
         self.t = real["t"]
 
         c1 = self.E / (1.0 - self.nu**2)
