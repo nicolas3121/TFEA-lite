@@ -103,53 +103,54 @@ def compute_auxiliary_fields(r, theta, kosolov, shear_mod):
     drdx, drdy = ct, st
     dtdx, dtdy = -st / r, ct / r
 
-    aux_stress = np.zeros((2, 2, 2))  # [mode, i, j]
-    aux_grad_u = np.zeros((2, 2, 2))  # [mode, i, j] (du_i / dx_j)
-    aux_strain = np.zeros((2, 2, 2))
+    aux_stress = np.zeros((len(r), 2, 2, 2))  # [mode, i, j]
+    aux_grad_u = np.zeros((len(r), 2, 2, 2))  # [mode, i, j] (du_i / dx_j)
+    aux_strain = np.zeros((len(r), 2, 2, 2))
 
     # --- Mode I (aux_mode = 0) ---
-    aux_stress[0, 0, 0] = (fac_stress / sqr) * ct2 * (1.0 - st2 * s3t2)
-    aux_stress[0, 1, 1] = (fac_stress / sqr) * ct2 * (1.0 + st2 * s3t2)
-    aux_stress[0, 0, 1] = (fac_stress / sqr) * st2 * ct2 * c3t2
-    aux_stress[0, 1, 0] = aux_stress[0, 0, 1]
+    aux_stress[:, 0, 0, 0] = (fac_stress / sqr) * ct2 * (1.0 - st2 * s3t2)
+    aux_stress[:, 0, 1, 1] = (fac_stress / sqr) * ct2 * (1.0 + st2 * s3t2)
+    aux_stress[:, 0, 0, 1] = (fac_stress / sqr) * st2 * ct2 * c3t2
+    aux_stress[:, 0, 1, 0] = aux_stress[:, 0, 0, 1]
 
     du1_dr = fac_disp * 0.5 / sqr * ct2 * (kosolov - ct)
     du1_dt = fac_disp * sqr * (-0.5 * st2 * (kosolov - ct) + ct2 * st)
     du2_dr = fac_disp * 0.5 / sqr * st2 * (kosolov - ct)
     du2_dt = fac_disp * sqr * (0.5 * ct2 * (kosolov - ct) + st2 * st)
 
-    aux_grad_u[0, 0, 0] = du1_dr * drdx + du1_dt * dtdx
-    aux_grad_u[0, 0, 1] = du1_dr * drdy + du1_dt * dtdy
-    aux_grad_u[0, 1, 0] = du2_dr * drdx + du2_dt * dtdx
-    aux_grad_u[0, 1, 1] = du2_dr * drdy + du2_dt * dtdy
+    aux_grad_u[:, 0, 0, 0] = du1_dr * drdx + du1_dt * dtdx
+    aux_grad_u[:, 0, 0, 1] = du1_dr * drdy + du1_dt * dtdy
+    aux_grad_u[:, 0, 1, 0] = du2_dr * drdx + du2_dt * dtdx
+    aux_grad_u[:, 0, 1, 1] = du2_dr * drdy + du2_dt * dtdy
 
     # --- Mode II (aux_mode = 1) ---
-    aux_stress[1, 0, 0] = -(fac_stress / sqr) * st2 * (2.0 + ct2 * c3t2)
-    aux_stress[1, 1, 1] = (fac_stress / sqr) * st2 * ct2 * c3t2
-    aux_stress[1, 0, 1] = (fac_stress / sqr) * ct2 * (1.0 - st2 * s3t2)
-    aux_stress[1, 1, 0] = aux_stress[1, 0, 1]
+    aux_stress[:, 1, 0, 0] = -(fac_stress / sqr) * st2 * (2.0 + ct2 * c3t2)
+    aux_stress[:, 1, 1, 1] = (fac_stress / sqr) * st2 * ct2 * c3t2
+    aux_stress[:, 1, 0, 1] = (fac_stress / sqr) * ct2 * (1.0 - st2 * s3t2)
+    aux_stress[:, 1, 1, 0] = aux_stress[:, 1, 0, 1]
 
     du1_dr = fac_disp * 0.5 / sqr * st2 * (kosolov + 2.0 + ct)
     du1_dt = fac_disp * sqr * (0.5 * ct2 * (kosolov + 2.0 + ct) - st2 * st)
     du2_dr = -fac_disp * 0.5 / sqr * ct2 * (kosolov - 2.0 + ct)
     du2_dt = -fac_disp * sqr * (-0.5 * st2 * (kosolov - 2.0 + ct) - ct2 * st)
 
-    aux_grad_u[1, 0, 0] = du1_dr * drdx + du1_dt * dtdx
-    aux_grad_u[1, 0, 1] = du1_dr * drdy + du1_dt * dtdy
-    aux_grad_u[1, 1, 0] = du2_dr * drdx + du2_dt * dtdx
-    aux_grad_u[1, 1, 1] = du2_dr * drdy + du2_dt * dtdy
+    aux_grad_u[:, 1, 0, 0] = du1_dr * drdx + du1_dt * dtdx
+    aux_grad_u[:, 1, 0, 1] = du1_dr * drdy + du1_dt * dtdy
+    aux_grad_u[:, 1, 1, 0] = du2_dr * drdx + du2_dt * dtdx
+    aux_grad_u[:, 1, 1, 1] = du2_dr * drdy + du2_dt * dtdy
 
-    for m in range(2):
-        aux_strain[m] = 0.5 * (aux_grad_u[m] + aux_grad_u[m].T)
-
+    # Replaces the entire for m in range(2) block:
+    aux_strain = 0.5 * (aux_grad_u + aux_grad_u.transpose(0, 1, 3, 2))
     return aux_stress, aux_grad_u, aux_strain
 
 
-def calculate_element_I_mode(element, Ue, T_matrix, q_nodes, real_tip, kosolov, shear_mod):
+def calculate_element_I_mode(
+    element, Ue, T_matrix, q_nodes, real_tip, kosolov, shear_mod
+):
     I_mode = np.zeros(2)
     N_FN = 4
     DET_TOL = -1e-14
-
+    Ue = np.asarray(Ue, dtype=float).ravel()
 
     def accumulate_I_mode(nat_coords, w_eff, sign=None):
         nonlocal I_mode
@@ -158,17 +159,18 @@ def calculate_element_I_mode(element, Ue, T_matrix, q_nodes, real_tip, kosolov, 
             N, dN_dxi = element.shape_functions(nat_coords, enforce_sign=sign)
         else:
             N, dN_dxi = element.shape_functions(nat_coords)
-            
+
         # N shape: (num_nodes, num_gp) or similar; adjust based on your shape function convention
         # x_gp shape: (num_gp, 2)
-        x_gp = N[:, :N_FN].T @ element.node_coords
+        x_gp = (N[:, None, :N_FN] @ element.node_coords)[:, 0, :]
 
         J = dN_dxi[:, :, :N_FN] @ element.node_coords  # (num_gp, 2, 2)
-        dN_dxy = np.linalg.solve(J, dN_dxi)             # (num_gp, 2, num_nodes)
-        B = cal_B_2d_vec(dN_dxy)                        # (num_gp, 3, num_dof)
+        dN_dxy = np.linalg.solve(J, dN_dxi)  # (num_gp, 2, num_nodes)
+        B = cal_B_2d_vec(dN_dxy)  # (num_gp, 3, num_dof)
 
-        eps_h_voigt = np.einsum("gij,j->gi", B, Ue)     # (num_gp, 3) -> [eps_xx, eps_yy, 2*eps_xy]
-        sig_h_voigt = np.einsum("ij,gj->gi", element.C, eps_h_voigt) # (num_gp, 3)
+        eps_h_voigt = B @ Ue
+
+        sig_h_voigt = (element.C @ eps_h_voigt[:, :, None])[:, :, 0]
 
         # Reshape Voigt vectors [s_xx, s_yy, s_xy] to 2x2 tensors (g, 2, 2)
         sig_h = np.zeros((len(w_eff), 2, 2))
@@ -182,12 +184,12 @@ def calculate_element_I_mode(element, Ue, T_matrix, q_nodes, real_tip, kosolov, 
         eps_h[:, 0, 1] = eps_h[:, 1, 0] = 0.5 * eps_h_voigt[:, 2]
 
         # q-gradient in global coordinates: sum(q_i * dN_i/dx_j) -> shape (num_gp, 2)
-        grad_q_g = np.einsum('i,gdi->gd', q_nodes, dN_dxy[:, :, :element.N_FN])
+        grad_q_g = np.einsum("i,gdi->gd", q_nodes, dN_dxy[:, :, : element.N_FN])
 
         # Transform to crack-tip local coordinates
         x_loc = (T_matrix @ (x_gp - real_tip).T).T  # (num_gp, 2)
-        r = np.linalg.norm(x_loc, axis=1)           # (num_gp,)
-        
+        r = np.linalg.norm(x_loc, axis=1)  # (num_gp,)
+
         # Filter out points too close to the tip to avoid division by zero
         valid_mask = r >= 1.0e-12
         if not np.any(valid_mask):
@@ -197,30 +199,46 @@ def calculate_element_I_mode(element, Ue, T_matrix, q_nodes, real_tip, kosolov, 
         x_loc = x_loc[valid_mask]
         r_v = r[valid_mask]
         theta = np.arctan2(x_loc[:, 1], x_loc[:, 0])
-        
-        grad_q_loc = (T_matrix @ grad_q_g[valid_mask].T).T                        # (num_valid_gp, 2)
-        eps_h_loc = T_matrix @ eps_h[valid_mask] @ T_matrix.T                    # (num_valid_gp, 2, 2)
-        sig_h_loc = T_matrix @ sig_h[valid_mask] @ T_matrix.T                    # (num_valid_gp, 2, 2)
+
+        grad_q_loc = (T_matrix @ grad_q_g[valid_mask].T).T  # (num_valid_gp, 2)
+        eps_h_loc = T_matrix @ eps_h[valid_mask] @ T_matrix.T  # (num_valid_gp, 2, 2)
+        sig_h_loc = T_matrix @ sig_h[valid_mask] @ T_matrix.T  # (num_valid_gp, 2, 2)
         w_eff_v = w_eff[valid_mask]
 
-        aux_stress, aux_grad_u, aux_strain = compute_auxiliary_fields(r_v, theta, kosolov, shear_mod)
+        # Transform Ue to (num_nodes, 2) to compute gradient
+        Ue_nodes = Ue.reshape(-1, 2)
+
+        # Calculate full displacement gradient (du_i / dx_j) in global coords
+        # dN_dxy shape: (g, j, n), Ue_nodes shape: (n, i) -> (g, i, j)
+        grad_u_g = np.einsum("gjn, ni -> gij", dN_dxy, Ue_nodes)
+
+        # Transform full gradient to crack-tip local coordinates
+        grad_u_loc = T_matrix @ grad_u_g[valid_mask] @ T_matrix.T
+
+        aux_stress, aux_grad_u, aux_strain = compute_auxiliary_fields(
+            r_v, theta, kosolov, shear_mod
+        )
 
         # Fully vectorized interaction integral terms using einsum
         # i1: sig_h_loc[g, i, j] * aux_grad_u[m, g, i, 0] * grad_q_loc[g, j]
-        i1 = np.einsum('gij, mgi, gj -> mg', sig_h_loc, aux_grad_u[:, :, :, 0], grad_q_loc)
 
-        # i2: aux_stress[m, g, i, j] * eps_h_loc[g, i, 0] * grad_q_loc[g, j]
-        i2 = np.einsum('mgij, gi, gj -> mg', aux_stress, eps_h_loc[:, :, 0], grad_q_loc)
+        i1 = np.einsum(
+            "gij, gmi, gj -> mg", sig_h_loc, aux_grad_u[:, :, :, 0], grad_q_loc
+        )
+
+        # i2 uses local displacement gradient, NOT eps_h_loc
+        i2 = np.einsum(
+            "gmij, gi, gj -> mg", aux_stress, grad_u_loc[:, :, 0], grad_q_loc
+        )
 
         # Mutual strain energy W^(1,2): contraction of sig_h_loc and aux_strain
-        W_12 = np.einsum('gij, mgij -> mg', sig_h_loc, aux_strain)
+        W_12 = np.einsum("gij, gmij -> mg", sig_h_loc, aux_strain)
 
         # Domain integrand across all valid Gauss points: (2, num_valid_gp)
         integrand = (i1 + i2 - W_12 * grad_q_loc[:, 0][None, :]) * w_eff_v[None, :]
 
         # Accumulate results for both modes
         I_mode += np.sum(integrand, axis=1)
-
 
     if not getattr(element, "h_enrich", False) and not getattr(
         element, "partial_cut", False
@@ -369,7 +387,7 @@ class InteractionIntegralMethodSIF:
 
         tip_elem_idx = cut_mesh.find_containing_cell(tip_3d)
         if tip_elem_idx == -1:
-            for (_, cut_type, _) in cut_info.values():
+            for _, cut_type, _ in cut_info.values():
                 if cut_type == CutType.PARTIAL:
                     break
             else:
@@ -392,32 +410,31 @@ class InteractionIntegralMethodSIF:
 
         T_matrix = np.array([real_tip_t, real_tip_n])
 
-        r_max = self.r1 + np.maximum(self.dr)
+        r_max = self.r1  # + np.max(self.dr)
         j_element_idx = self._find_j_elements_idx(mesh, real_tip, (1 + R_TOL) * r_max)
         j_element_ids = original_ids[j_element_idx]
 
         I_mode = np.zeros(2)
         for elem_id in j_element_ids:
-            element = model.elements[elem_id - 1]
-            cut_type = cut_info[elem_id][1]
+            elem_info = model.elements[elem_id - 1]
+            cut_type = cut_info.get(elem_id, (0, CutType.NONE, 0))[1]
 
-            elem = _build_elem_2d(model, level_set, cut_type, element)
+            elem = _build_elem_2d(model, level_set, cut_type, elem_info)
             Ue = fill_element_displacement(
-                np.asarray(element[4]), model.list_dof, model.Ug
+                np.asarray(elem_info[4]), model.list_dof, model.Ug
             ).reshape((-1, 2))
 
-            q_nodes = np.linalg.norm(elem.node_coords - real_tip[None, :], axis=1) <= self.r1
-            # TODO fixen
+            q_nodes = (
+                np.linalg.norm(elem.node_coords - real_tip[None, :], axis=1) <= self.r1
+            )
 
-            I_mode += calculate_element_I_mode(element, Ue, T_matrix, q_nodes, real_tip, self.kosolov, self.shear_mod)
+            I_mode += calculate_element_I_mode(
+                elem, Ue, T_matrix, q_nodes, real_tip, self.kosolov, self.shear_mod
+            )
 
         K_calc = I_mode * self.E_eff / 2.0
         KI, KII = K_calc[0], K_calc[1]
-        return KI, KII
-
-
-
-
+        return KI, KII, T_matrix
 
 
 class DisplacementCorrelationMethodSIF:
@@ -481,7 +498,7 @@ class DisplacementCorrelationMethodSIF:
         tip_elem_idx = cut_mesh.find_containing_cell(tip_3d)
         # assert tip_elem_idx != -1, "Couldn't find element containing tip"
         if tip_elem_idx == -1:
-            for (_, cut_type, _) in cut_info.values():
+            for _, cut_type, _ in cut_info.values():
                 if cut_type == CutType.PARTIAL:
                     break
             else:

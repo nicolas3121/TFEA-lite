@@ -1,3 +1,5 @@
+from typing import Final
+
 import numpy as np
 
 from ..core.quadratures import BAR_RULES, QUAD_RULES
@@ -5,6 +7,11 @@ from .utils import cal_B_2d_vec, cal_N_2d_vec
 
 
 class Quad4n:
+    NODES: Final = 4
+    DOFS: Final = 2
+    N_FN: Final = NODES
+    N_DOFS: Final = DOFS * N_FN
+
     def __init__(self, node_coords, material, real):
         self.node_coords = node_coords
         self.E = material["E"]
