@@ -112,7 +112,7 @@ class DofList:
             ]
         )
 
-    # assumption that there are no gaps selected dofs
+    # assumption that there are no gaps in selected dofs
     # if node has dofs A, B , C can't get A, C in one query
     def get_elem_dof_numbers_flat(self, nodes, mask):
         nodes = np.atleast_1d(np.asarray(nodes))

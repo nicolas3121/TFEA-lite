@@ -497,8 +497,9 @@ def enriched_shape_functions(
         if dphi_n_dxi is None or dphi_t_dxi is None:
             dphi_n_dxi = np.sum(elem.phi_n * dN_dxi[:, :, : elem.N_FN], axis=2)
             dphi_t_dxi = np.sum(elem.phi_t * dN_dxi[:, :, : elem.N_FN], axis=2)
+        sign_flipper = np.ones_like(phi_n, dtype=float)
         if enforce_sign is not None:
-            dphi_n_dxi[to_flip] *= -1
+            sign_flipper[to_flip] = -1
         r = np.sqrt(phi_n**2 + phi_t**2)
         r = np.maximum(r, 1e-14)  # avoid divide by zero
         sqrt_r = np.sqrt(r)
@@ -514,6 +515,8 @@ def enriched_shape_functions(
             phi_t**2 + phi_n**2
         )[:, None]  # = (dphi_n_dxi * np.cos(theta) + np.sin(theta) dphi_t_dxi) / r
         bf = branch_functions(sqrt_r, theta).T
+        bf[:, 1] *= sign_flipper
+        bf[:, 2] *= sign_flipper
         bf_i = branch_functions(sqrt_r_i, theta_i).T
 
         half_cos = np.cos(theta[:, None] / 2)
@@ -525,10 +528,11 @@ def enriched_shape_functions(
             (-1, elem.DOFS, 1)
         ) * (bf / sqrt_r[:, None])[:, None, :] + sqrt_r[:, None, None] * np.array(
             [
-                half_cos * dtheta_dxi / 2,
+                half_cos * sign_flipper[:, None] * dtheta_dxi / 2,
                 -half_sin * dtheta_dxi / 2,
                 half_cos * dtheta_dxi / 2 * sin + half_sin * cos * dtheta_dxi,
-                -half_sin * dtheta_dxi / 2 * sin + half_cos * cos * dtheta_dxi,
+                (-half_sin * dtheta_dxi / 2 * sin + half_cos * cos * dtheta_dxi)
+                * sign_flipper[:, None],
             ]
         ).transpose(1, 2, 0)
 

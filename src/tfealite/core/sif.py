@@ -160,8 +160,6 @@ def calculate_element_I_mode(
         else:
             N, dN_dxi = element.shape_functions(nat_coords)
 
-        # N shape: (num_nodes, num_gp) or similar; adjust based on your shape function convention
-        # x_gp shape: (num_gp, 2)
         x_gp = (N[:, None, :N_FN] @ element.node_coords)[:, 0, :]
 
         J = dN_dxi[:, :, :N_FN] @ element.node_coords  # (num_gp, 2, 2)
@@ -277,9 +275,6 @@ def calculate_element_I_mode(
                 if np.any(detJi_mod < DET_TOL):
                     print("warning encounter negative detJi")
 
-                n = np.array([1 - xi - eta, xi, eta])
-                nat_coords_sub = nat_sub_x_e @ n
-
                 N, dN_dxi_sub = element.shape_functions(
                     nat_coords_sub, enforce_sign=sign
                 )
@@ -346,12 +341,11 @@ def calculate_element_I_mode(
 
 
 class InteractionIntegralMethodSIF:
-    def __init__(self, r1, dr, E, nu, plane_stress):
+    def __init__(self, r, E, nu, plane_stress):
         self.E_eff = E if plane_stress else E / (1.0 - nu**2)
         self.shear_mod = E / (2.0 * (1.0 + nu))
         self.kosolov = (3.0 - nu) / (1.0 + nu) if plane_stress else (3.0 - 4.0 * nu)
-        self.r1 = r1
-        self.dr = dr
+        self.r = r
 
     def _find_j_elements_idx(self, mesh, real_tip, r):
         real_tip_3d = (real_tip[0], real_tip[1], 0.0)
@@ -410,7 +404,7 @@ class InteractionIntegralMethodSIF:
 
         T_matrix = np.array([real_tip_t, real_tip_n])
 
-        r_max = self.r1  # + np.max(self.dr)
+        r_max = self.r[0]  # + np.max(self.dr)
         j_element_idx = self._find_j_elements_idx(mesh, real_tip, (1 + R_TOL) * r_max)
         j_element_ids = original_ids[j_element_idx]
 
@@ -425,7 +419,8 @@ class InteractionIntegralMethodSIF:
             ).reshape((-1, 2))
 
             q_nodes = (
-                np.linalg.norm(elem.node_coords - real_tip[None, :], axis=1) <= self.r1
+                np.linalg.norm(elem.node_coords - real_tip[None, :], axis=1)
+                <= self.r[0]
             )
 
             I_mode += calculate_element_I_mode(
@@ -538,7 +533,7 @@ class DisplacementCorrelationMethodSIF:
         for elem_id, point_idx_batch in zip(unique_cells, grouped_point_indices):
             element = model.elements[elem_id - 1]
             cut_type = cut_info[elem_id][1]
-            print("cut_type", cut_type)
+            # print("cut_type", cut_type)
 
             elem = _build_elem_2d(model, level_set, cut_type, element)
             _, nat_coords_batch = elem.nearest_point_on_crack(p1[point_idx_batch])

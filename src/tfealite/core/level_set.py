@@ -125,9 +125,9 @@ class LevelSet:
         phi_n_subset = np.sum(n_vec * distance, axis=1)
         self.phi_n[indices_subset] = phi_n_subset
 
-        in_front = np.isclose(u_i, 1.0, 1e-12)
+        in_front = np.isclose(u_i, 1.0, 1e-14)
         if embedded:
-            in_front |= np.isclose(u_i, 0.0, 1e-12)
+            in_front |= np.isclose(u_i, 0.0, 1e-14)
 
         # to_snap = np.where(
         #     (np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h) & ~in_front)
@@ -178,9 +178,14 @@ class LevelSet:
             cal_near_tip(t2_pt, 0.0, 1, indices_near_tip2, phi_t2)
             self.phi_t_list.append(phi_t2)
 
-        to_snap = np.where(np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h))[
-            0
-        ]
+        # to_snap = np.where(np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h))[
+        #     0
+        # ]
+        # global_to_snap = indices_subset[to_snap]
+
+        to_snap = np.where(
+            np.isclose(phi_n_subset, 0.0, atol=snapping_tolerance * h) & ~in_front
+        )[0]
         global_to_snap = indices_subset[to_snap]
 
         signs = np.where(phi_n_subset[to_snap] >= 0, 1.0, -1.0)
@@ -194,6 +199,105 @@ class LevelSet:
         self.phi_n[global_to_snap] = safe_dist
 
         self.embedded = embedded
+
+    def separate_tip_pair(
+        self, nodes, elements, h, snapping_tolerance=0.03, max_move=0.5
+    ):
+        """Make sure the first two crack nodes behind each tip lie on opposite sides.
+
+        P is the node of the tip element(s) behind the tip closest to the crack (it has
+        no Heaviside dofs), Q is the node diagonally opposite P in a cut quad of P's
+        support. When both lie on the same side of the crack the crack opening near the
+        tip is underestimated (stress spikes for cracks close to element diagonals), so
+        the one closest to the crack is moved to the other side, like the snapping above.
+        """
+        assert self.bspline is not None and self.phi_n is not None
+        bspline = self.bspline
+        coordinates = np.asarray(nodes)[:, 1:3]
+        quads = [elem for elem in elements if len(elem[4]) == 4]
+        if not quads:
+            return []
+        conn = np.array([elem[4] for elem in quads]) - 1
+        elem_coords = coordinates[conn]
+        lower = elem_coords.min(axis=1)
+        upper = elem_coords.max(axis=1)
+        edges = np.roll(elem_coords, -1, axis=1) - elem_coords
+        tol = 1e-10 * h**2
+
+        tips = [(bspline(np.array([1.0]))[0], self.phi_t_list[0])]
+        if self.embedded:
+            tips.append((bspline(np.array([0.0]))[0], self.phi_t_list[1]))
+
+        moved = []
+        for tip, phi_t in tips:
+            candidates = np.where(
+                np.all((tip >= lower - tol) & (tip <= upper + tol), axis=1)
+            )[0]
+            vec = tip - elem_coords[candidates]
+            cross = (
+                edges[candidates, :, 0] * vec[:, :, 1]
+                - edges[candidates, :, 1] * vec[:, :, 0]
+            )
+            tip_elems = candidates[np.all(cross >= -tol, axis=1)]
+            if len(tip_elems) == 0:
+                continue
+            tip_nodes = np.unique(conn[tip_elems])
+
+            behind = tip_nodes[
+                (phi_t[tip_nodes] < 0) & ~np.isnan(self.phi_n[tip_nodes])
+            ]
+            if len(behind) == 0:
+                continue
+            P = behind[np.argmin(np.abs(self.phi_n[behind]))]
+
+            # Q: node opposite to P in a cut element of P's support (not a tip element),
+            # taking the element whose opposite node is closest to the crack
+            q_candidates = []
+            for e in np.where(np.any(conn == P, axis=1))[0]:
+                if e in tip_elems:
+                    continue
+                phi_n_e = self.phi_n[conn[e]]
+                if (
+                    np.any(np.isnan(phi_n_e))
+                    or np.all(phi_n_e > 0)
+                    or np.all(phi_n_e < 0)
+                ):
+                    continue
+                local_P = np.where(conn[e] == P)[0][0]
+                q = conn[e, (local_P + 2) % 4]
+                if phi_t[q] < phi_t[P]:
+                    q_candidates.append(q)
+            if not q_candidates:
+                continue
+            q_candidates = np.array(q_candidates)
+            Q = q_candidates[np.argmin(np.abs(self.phi_n[q_candidates]))]
+
+            if np.sign(self.phi_n[P]) != np.sign(self.phi_n[Q]):
+                continue
+
+            to_move = P if abs(self.phi_n[P]) <= abs(self.phi_n[Q]) else Q
+            safe_dist = -np.sign(self.phi_n[to_move]) * snapping_tolerance * h * 1.01
+            shift_mag = safe_dist - self.phi_n[to_move]
+            if abs(shift_mag) > max_move * h:
+                print(
+                    f"warning: separating tip pair would move node {to_move + 1} "
+                    f"by {abs(shift_mag) / h:.2f}h, skipped"
+                )
+                continue
+
+            u_range = np.linspace(0, 1, 10000)
+            u = u_range[
+                np.argmin(
+                    np.sum((bspline(u_range) - coordinates[to_move]) ** 2, axis=1)
+                )
+            ]
+            t_vec = bspline(np.array([u]), nu=1)[0]
+            n_vec = np.array([-t_vec[1], t_vec[0]]) / np.linalg.norm(t_vec)
+
+            nodes[to_move, 1:3] += shift_mag * n_vec
+            self.phi_n[to_move] = safe_dist
+            moved.append(to_move + 1)
+        return moved
 
     def gen_from_ndbsplines(
         self,

@@ -164,7 +164,14 @@ class XFEModel(FEModel):
         self.level_sets.append(ls)
         self.mesh = build_mesh(self.nodes, self.elements)
 
-    def insert_crack_spline(self, bspline, embedded, h=0.05, snapping_tolerance=0.03):
+    def insert_crack_spline(
+        self,
+        bspline,
+        embedded,
+        h=0.05,
+        snapping_tolerance=0.03,
+        separate_tip_pair=True,
+    ):
         ls = LevelSet()
         ls.gen_from_bspline(
             self.nodes,
@@ -174,6 +181,10 @@ class XFEModel(FEModel):
             embedded=embedded,
             snapping_tolerance=snapping_tolerance,
         )
+        if separate_tip_pair:
+            ls.separate_tip_pair(
+                self.nodes, self.elements, h, snapping_tolerance=snapping_tolerance
+            )
         self.level_sets.append(ls)
         self.mesh = build_mesh(self.nodes, self.elements)
 
